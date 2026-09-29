@@ -587,6 +587,9 @@ export default function fffExtension(pi: ExtensionAPI) {
 
     ctx.ui.addAutocompleteProvider((current) => {
       const mentionProvider = createFffMentionProvider(getMentionItems);
+      // True when the FFF provider served the current suggestions: applying a
+      // selection must then go through the FFF completion, not pi's native one.
+      let fffServed = false;
 
       return {
         async getSuggestions(lines, cursorLine, cursorCol, options) {
@@ -597,15 +600,19 @@ export default function fffExtension(pi: ExtensionAPI) {
               cursorCol,
               options,
             );
-            if (mentionResult) return mentionResult;
+            if (mentionResult) {
+              fffServed = true;
+              return mentionResult;
+            }
           } catch {
             // Delegate when FFF lookup is unavailable.
           }
+          fffServed = false;
 
           return current.getSuggestions(lines, cursorLine, cursorCol, options);
         },
         applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
-          return current.applyCompletion(
+          return (fffServed ? mentionProvider : current).applyCompletion(
             lines,
             cursorLine,
             cursorCol,

@@ -8,6 +8,7 @@ type MockFinder = {
   waitForScan: ReturnType<typeof mock>;
   mixedSearch: ReturnType<typeof mock>;
   grep: ReturnType<typeof mock>;
+  fileSearch: ReturnType<typeof mock>;
   getScanProgress: ReturnType<typeof mock>;
   destroy: ReturnType<typeof mock>;
 };
@@ -16,6 +17,7 @@ const createCalls: unknown[] = [];
 let finders: MockFinder[] = [];
 let mixedSearchImpl: ((query: string, options: unknown) => unknown) | undefined;
 let grepImpl: ((query: string, options: unknown) => unknown) | undefined;
+let fileSearchImpl: ((query: string, options: unknown) => unknown) | undefined;
 let scanProgressImpl: (() => unknown) | undefined;
 
 function createMockFinder(): MockFinder {
@@ -61,6 +63,18 @@ function createMockFinder(): MockFinder {
         },
       };
     }),
+    fileSearch: mock((query: string, options: unknown) => {
+      if (fileSearchImpl) return fileSearchImpl(query, options);
+      return {
+        ok: true,
+        value: {
+          items: [],
+          scores: [],
+          totalMatched: 0,
+          totalFiles: 0,
+        },
+      };
+    }),
     destroy: mock(function (this: MockFinder) {
       this.isDestroyed = true;
     }),
@@ -86,16 +100,18 @@ function nativeRefusal(options: {
   return options.enableFsRootScanning === false && path.dirname(base) === base;
 }
 
+// 原生层默认行为；测试可经 mockImplementation 注入失败以覆盖 init 失败路径。
+function defaultCreate(options: any) {
+  createCalls.push(options);
+  if (nativeRefusal(options)) return { ok: false, error: NATIVE_ROOT_REFUSAL };
+  const finder = createMockFinder();
+  finders.push(finder);
+  return { ok: true, value: finder };
+}
+
 const finderModule = {
   FileFinder: {
-    create: mock((options: any) => {
-      createCalls.push(options);
-      if (nativeRefusal(options))
-        return { ok: false, error: NATIVE_ROOT_REFUSAL };
-      const finder = createMockFinder();
-      finders.push(finder);
-      return { ok: true, value: finder };
-    }),
+    create: mock(defaultCreate),
   },
 };
 
@@ -264,7 +280,9 @@ beforeEach(() => {
   finders = [];
   mixedSearchImpl = undefined;
   grepImpl = undefined;
+  fileSearchImpl = undefined;
   scanProgressImpl = undefined;
+  finderModule.FileFinder.create.mockImplementation(defaultCreate);
 
   for (const key of CONFIG_ENV_KEYS) delete process.env[key];
   process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -752,6 +770,21 @@ describe("pi-fff autocomplete registration", () => {
       ],
     });
     expect(current.getSuggestions).not.toHaveBeenCalled();
+
+    // FFF 提供的建议被选中时，走 FFF 自己的 applyCompletion（而非委托原生）。
+    const applied = provider.applyCompletion(
+      ["open @src"],
+      0,
+      9,
+      { value: "@src/index.ts", label: "index.ts" },
+      "@src",
+    );
+    expect(applied).toEqual({
+      lines: ["open @src/index.ts"],
+      cursorLine: 0,
+      cursorCol: 18,
+    });
+    expect(current.applyCompletion).not.toHaveBeenCalled();
   });
 
   test("delegates when FFF lookup fails", async () => {
@@ -937,5 +970,315 @@ describe("grep per-file cap (#825)", () => {
     expect(captured.pageSize).toBe(20);
     expect(captured.maxMatchesPerFile).toBe(200);
     expect(captured.maxMatchesPerFile).toBeGreaterThan(captured.pageSize);
+  });
+});
+
+function toolWithName(
+  setup: { pi: { registerTool: ReturnType<typeof mock> } },
+  name: string,
+) {
+  const tool = setup.pi.registerTool.mock.calls
+    .map(([t]) => t)
+    .find((t) => t.name === name);
+  expect(tool).toBeDefined();
+  return tool;
+}
+
+describe("grep/find edge branches", () => {
+  // grep：regex 回退与 next-cursor 通知分支
+  test("grep surfaces regex fallback and next-cursor notices", async () => {
+    grepImpl = () => ({
+      ok: true,
+      value: {
+        items: [
+          {
+            relativePath: "src/a.ts",
+            lineNumber: 1,
+            col: 1,
+            lineContent: "hello",
+            contextBefore: [],
+            contextAfter: [],
+          },
+        ],
+        totalMatched: 3,
+        totalFiles: 1,
+        totalFilesSearched: 1,
+        filteredFileCount: 0,
+        nextCursor: { fileOffset: 1 },
+        regexFallbackError: "bad pattern",
+      },
+    });
+
+    const setup = await start();
+    const tool = toolWithName(setup, "grep");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "TODO" },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).toContain("Invalid regex: bad pattern");
+    expect(result.content[0].text).toContain('Continue with cursor="fff_c');
+    await shutdown(setup);
+  });
+
+  // grep：绝对路径约束路由到辅助索引
+  test("grep routes absolute path constraints to an auxiliary finder", async () => {
+    const setup = await start();
+    const tool = toolWithName(setup, "grep");
+    await tool.execute(
+      "call-1",
+      { pattern: "x", path: "/tmp/fff-aux-grep" },
+      abortOptions().signal,
+    );
+
+    expect(createCalls).toHaveLength(2);
+    await shutdown(setup);
+  });
+
+  // find：满页高分时给出剩余量与分页游标
+  function fullPageFiles() {
+    return Array.from({ length: 30 }, (_, i) => ({
+      relativePath: `src/f${i}.ts`,
+      size: 1,
+      modified: 1,
+      accessFrecencyScore: 0,
+      modificationFrecencyScore: 0,
+      totalFrecencyScore: 100,
+      gitStatus: "clean",
+    }));
+  }
+
+  test("find reports remaining matches and stores a cursor", async () => {
+    fileSearchImpl = () => {
+      const items = fullPageFiles();
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 100 })),
+          totalMatched: 50,
+          totalFiles: 1,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "config", limit: 30 },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).toContain("20 more matches available");
+    expect(result.content[0].text).toContain('cursor="');
+    await shutdown(setup);
+  });
+
+  // find：用游标续页走 resumed 路径
+  test("find resumes pagination via a stored cursor", async () => {
+    let captured: unknown;
+    fileSearchImpl = (_query, options) => {
+      captured = options;
+      const items = fullPageFiles();
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 100 })),
+          totalMatched: 50,
+          totalFiles: 1,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const first = await tool.execute(
+      "call-1",
+      { pattern: "config" },
+      abortOptions().signal,
+    );
+    const cursorId = first.content[0].text.match(/cursor="(\d+)"/)?.[1];
+    expect(cursorId).toBeDefined();
+    await tool.execute(
+      "call-2",
+      { pattern: "config", cursor: cursorId! },
+      abortOptions().signal,
+    );
+
+    expect(captured).toEqual({ pageIndex: 1, pageSize: 30 });
+    await shutdown(setup);
+  });
+
+  // find：弱匹配结果被采样并给出 capped 通知
+  test("find caps weak fuzzy noise with a notice", async () => {
+    fileSearchImpl = () => {
+      const items = Array.from({ length: 3 }, (_, i) => ({
+        relativePath: `src/f${i}.ts`,
+        size: 1,
+        modified: 1,
+        accessFrecencyScore: 0,
+        modificationFrecencyScore: 0,
+        totalFrecencyScore: 1,
+        gitStatus: "clean",
+      }));
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 1 })),
+          totalMatched: 42,
+          totalFiles: 1,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "x" },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).toContain("weak scattered fuzzy");
+    expect(result.content[0].text).toContain("capped at 3/42");
+    await shutdown(setup);
+  });
+
+  // find：绝对路径首查建 aux 索引，游标续页走 auxRoot 精确复用
+  test("find resumes on the exact auxiliary root via cursor", async () => {
+    fileSearchImpl = () => {
+      const items = fullPageFiles();
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 100 })),
+          totalMatched: 50,
+          totalFiles: 1,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const first = await tool.execute(
+      "call-1",
+      { pattern: "config", path: "/tmp/fff-aux-root" },
+      abortOptions().signal,
+    );
+    expect(createCalls).toHaveLength(2);
+
+    // 游标携带 auxRoot：续页精确复用已有 aux picker，不再新建。
+    const cursorId = first.content[0].text.match(/cursor="(\d+)"/)?.[1];
+    expect(cursorId).toBeDefined();
+    await tool.execute(
+      "call-2",
+      { pattern: "config", cursor: cursorId! },
+      abortOptions().signal,
+    );
+    expect(createCalls).toHaveLength(2);
+    await shutdown(setup);
+  });
+});
+
+describe("init failure and fuzzy fallback paths", () => {
+  // 覆盖 reportInitFailure（session_start 的 catch 路径）
+  test("session_start reports native init failures", async () => {
+    finderModule.FileFinder.create.mockImplementation(() => ({
+      ok: false,
+      error: "boom",
+    }));
+
+    const setup = createPi();
+    const ctx = createContext();
+    fffExtension(setup.pi as any);
+
+    await setup.events.get("session_start")?.({ reason: "startup" }, ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
+    const [message, level] = ctx.ui.notify.mock.calls[0];
+    expect(message).toContain("FFF init failed");
+    expect(message).toContain("boom");
+    expect(level).toBe("error");
+    await shutdown(setup);
+  });
+
+  // 覆盖 before_agent_start 的 catch 路径：prepareSession 内唯一可失败点是
+  // resolveStartupConfig 读 flag，注入 getFlag 抛错以触达防御分支。
+  test("before_agent_start reports config resolution failures", async () => {
+    const setup = createPi();
+    const ctx = createContext();
+    setup.pi.getFlag.mockImplementation(() => {
+      throw new Error("flag boom");
+    });
+    fffExtension(setup.pi as any);
+
+    await setup.events.get("before_agent_start")?.({}, ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
+    const [message, level] = ctx.ui.notify.mock.calls[0];
+    expect(message).toContain("FFF init failed");
+    expect(message).toContain("flag boom");
+    expect(level).toBe("error");
+    await shutdown(setup);
+  });
+
+  // cover fuzzy fallback hit: zero plain hits retry as fuzzy
+  test("grep falls back to fuzzy when a plain search misses", async () => {
+    let calls = 0;
+    grepImpl = (_query, options) => {
+      calls++;
+      if (calls === 1)
+        return {
+          ok: true,
+          value: {
+            items: [],
+            totalMatched: 0,
+            totalFiles: 0,
+            totalFilesSearched: 0,
+            filteredFileCount: 0,
+            nextCursor: null,
+          },
+        };
+      // fuzzy 二次调用命中
+      return {
+        ok: true,
+        value: {
+          items: [
+            {
+              relativePath: "src/b.ts",
+              lineNumber: 2,
+              col: 1,
+              lineContent: "HelloConfig",
+              contextBefore: [],
+              contextAfter: [],
+            },
+          ],
+          totalMatched: 1,
+          totalFiles: 1,
+          totalFilesSearched: 1,
+          filteredFileCount: 0,
+          nextCursor: null,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "grep");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "TODO" },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).toContain(
+      "0 exact matches. Maybe you meant this?",
+    );
+    expect(calls).toBe(2);
+    await shutdown(setup);
   });
 });
