@@ -3,13 +3,9 @@ import { join } from "node:path";
 import { piDataDir } from "./paths";
 
 export const CONFIG_FILE_NAME = "pi-fff.json";
-export const VALID_MODES = ["tools-and-ui", "tools-only", "override"] as const;
-
-export type FffMode = (typeof VALID_MODES)[number];
 
 export interface FffConfig {
   $schema?: string;
-  mode?: FffMode;
   frecencyDbPath?: string;
   historyDbPath?: string;
   enableFsRootScanning?: boolean;
@@ -20,7 +16,6 @@ export interface FffConfig {
 
 const CONFIG_KEYS = new Set<keyof FffConfig>([
   "$schema",
-  "mode",
   "frecencyDbPath",
   "historyDbPath",
   "enableFsRootScanning",
@@ -57,10 +52,6 @@ export function loadConfig(agentDir = piDataDir()): FffConfig {
     if (!CONFIG_KEYS.has(key as keyof FffConfig)) {
       throw invalidConfig(configPath, `unknown option "${key}"`);
     }
-  }
-
-  if (parsed.mode !== undefined && !VALID_MODES.includes(parsed.mode as FffMode)) {
-    throw invalidConfig(configPath, `"mode" must be one of ${VALID_MODES.join(", ")}`);
   }
 
   validateString(configPath, parsed, "$schema");

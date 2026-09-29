@@ -26,7 +26,6 @@ describe("loadConfig", () => {
     const config = {
       $schema:
         "https://raw.githubusercontent.com/dmtrKovalenko/fff/main/packages/pi-fff/pi-fff.schema.json",
-      mode: "override" as const,
       frecencyDbPath: "/data/frecency",
       historyDbPath: "/data/history",
       enableFsRootScanning: true,
@@ -40,7 +39,7 @@ describe("loadConfig", () => {
   });
 
   test("rejects malformed JSON", () => {
-    fs.writeFileSync(configPath, '{"mode":');
+    fs.writeFileSync(configPath, '{"oops":');
 
     expect(() => loadConfig(agentDir)).toThrow(
       `Invalid pi-fff config at ${configPath}: not valid JSON`,
@@ -48,26 +47,32 @@ describe("loadConfig", () => {
   });
 
   test("rejects non-object config", () => {
-    writeConfig(["override"]);
+    writeConfig(["oops"]);
 
     expect(() => loadConfig(agentDir)).toThrow("expected a JSON object");
   });
 
   test("rejects unknown options", () => {
-    writeConfig({ mode: "override", typo: true });
+    writeConfig({ typo: true });
 
     expect(() => loadConfig(agentDir)).toThrow('unknown option "typo"');
+
+    // "mode" 在 override 固定后不再是合法配置键
+    writeConfig({ mode: "override" });
+    expect(() => loadConfig(agentDir)).toThrow('unknown option "mode"');
   });
 
   test("rejects invalid option values", () => {
     const cases: [Record<string, unknown>, string][] = [
       [{ $schema: false }, '"$schema" must be a non-empty string'],
       [{ $schema: "" }, '"$schema" must be a non-empty string'],
-      [{ mode: "replace" }, '"mode" must be one of'],
       [{ frecencyDbPath: "" }, '"frecencyDbPath" must be a non-empty string'],
       [{ historyDbPath: false }, '"historyDbPath" must be a non-empty string'],
       [{ enableFsRootScanning: 1 }, '"enableFsRootScanning" must be a boolean'],
-      [{ enableHomeDirScanning: "false" }, '"enableHomeDirScanning" must be a boolean'],
+      [
+        { enableHomeDirScanning: "false" },
+        '"enableHomeDirScanning" must be a boolean',
+      ],
       [{ warnOnHomeDirScan: "false" }, '"warnOnHomeDirScan" must be a boolean'],
       [{ followSymlinks: "true" }, '"followSymlinks" must be a boolean'],
     ];

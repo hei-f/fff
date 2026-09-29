@@ -11,12 +11,6 @@
       "minLength": 1,
       "description": "Schema URL used by editors for validation and completion."
     },
-    "mode": {
-      "type": "string",
-      "enum": ["tools-and-ui", "tools-only", "override"],
-      "default": "tools-and-ui",
-      "description": "Controls which FFF tools and autocomplete integrations are enabled."
-    },
     "frecencyDbPath": {
       "type": "string",
       "minLength": 1,
