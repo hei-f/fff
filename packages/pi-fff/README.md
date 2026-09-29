@@ -1,4 +1,4 @@
-# @ff-labs/pi-fff
+# @hf-pi/fff
 
 A [pi](https://github.com/badlogic/pi-mono) extension that replaces the built-in `find` and `grep` tools with [FFF](https://github.com/dmtrKovalenko/fff) — a Rust-native, SIMD-accelerated file finder with built-in memory.
 
@@ -32,13 +32,13 @@ Requirements:
 **Via npm (recommended):**
 
 ```bash
-pi install npm:@ff-labs/pi-fff
+pi install npm:@hf-pi/fff
 ```
 
 Project-local install:
 
 ```bash
-pi install -l npm:@ff-labs/pi-fff
+pi install -l npm:@hf-pi/fff
 ```
 
 **Via git:**

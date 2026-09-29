@@ -133,7 +133,7 @@ The MCP server gives any agent a file search tool that is faster and more token-
 ### Install
 
 ```bash
-pi install npm:@ff-labs/pi-fff
+pi install npm:@hf-pi/fff
 ```
 
 The extension runs exclusively in override mode: it replaces pi's built-in `grep` and `find` with FFF implementations right after install.
@@ -926,7 +926,7 @@ If you are running one grep from a terminal, `rg` is still the right tool. If yo
 - `crates/fff-mcp` - MCP server binary.
 - `packages/fff-node` - Node.js SDK (`@ff-labs/fff-node`).
 - `packages/fff-bun` - Bun SDK (`@ff-labs/fff-bun`).
-- `packages/pi-fff` - pi extension (`@ff-labs/pi-fff`).
+- `packages/pi-fff` - pi extension (`@hf-pi/fff`).
 - `lua/` - Neovim-side plugin code.
 
 ## Contributing
