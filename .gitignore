@@ -63,3 +63,4 @@ htmlcov/
 *.swp
 *.swo
 *~
+packages/pi-fff/tsconfig.tsbuildinfo
