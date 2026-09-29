@@ -78,7 +78,10 @@ function nativeRefusal(options: {
   enableFsRootScanning?: boolean;
 }): boolean {
   const base = path.resolve(options.basePath);
-  if (options.enableHomeDirScanning === false && base === path.resolve(os.homedir()))
+  if (
+    options.enableHomeDirScanning === false &&
+    base === path.resolve(os.homedir())
+  )
     return true;
   return options.enableFsRootScanning === false && path.dirname(base) === base;
 }
@@ -87,7 +90,8 @@ const finderModule = {
   FileFinder: {
     create: mock((options: any) => {
       createCalls.push(options);
-      if (nativeRefusal(options)) return { ok: false, error: NATIVE_ROOT_REFUSAL };
+      if (nativeRefusal(options))
+        return { ok: false, error: NATIVE_ROOT_REFUSAL };
       const finder = createMockFinder();
       finders.push(finder);
       return { ok: true, value: finder };
@@ -114,7 +118,8 @@ mock.module("@earendil-works/pi-tui", () => ({
       this.text = text;
     }
   },
-  sliceByColumn: (text: string, _start: number, end: number) => text.slice(0, end),
+  sliceByColumn: (text: string, _start: number, end: number) =>
+    text.slice(0, end),
   visibleWidth: (text: string) => text.length,
 }));
 
@@ -122,7 +127,11 @@ const schema = (type: string) => (options?: unknown) => ({ type, options });
 
 mock.module("@sinclair/typebox", () => ({
   Type: {
-    Array: (items: unknown, options?: unknown) => ({ type: "array", items, options }),
+    Array: (items: unknown, options?: unknown) => ({
+      type: "array",
+      items,
+      options,
+    }),
     Boolean: schema("boolean"),
     Number: schema("number"),
     Object: (properties: unknown, options?: unknown) => ({
@@ -130,9 +139,16 @@ mock.module("@sinclair/typebox", () => ({
       properties,
       options,
     }),
-    Optional: (value: Record<string, unknown>) => ({ ...value, optional: true }),
+    Optional: (value: Record<string, unknown>) => ({
+      ...value,
+      optional: true,
+    }),
     String: schema("string"),
-    Union: (items: unknown[], options?: unknown) => ({ type: "union", items, options }),
+    Union: (items: unknown[], options?: unknown) => ({
+      type: "union",
+      items,
+      options,
+    }),
   },
 }));
 
@@ -140,7 +156,7 @@ const { default: fffExtension } = await import("../src/index");
 
 type EventHandler = (...args: any[]) => unknown;
 
-function createPi(mode?: string, flags: Record<string, unknown> = {}) {
+function createPi(flags: Record<string, unknown> = {}) {
   const events = new Map<string, EventHandler>();
   const commands = new Map<string, any>();
   const registeredFlags = new Set<string>();
@@ -149,7 +165,7 @@ function createPi(mode?: string, flags: Record<string, unknown> = {}) {
   const pi = {
     getFlag: mock((name: string) => {
       if (!flagsReady || !registeredFlags.has(name)) return undefined;
-      return name === "fff-mode" && mode !== undefined ? mode : flags[name];
+      return flags[name];
     }),
     on: mock((event: string, handler: EventHandler) => {
       events.set(event, (...args) => {
@@ -181,12 +197,11 @@ function createPi(mode?: string, flags: Record<string, unknown> = {}) {
 function createContext(cwd = "/tmp/workspace") {
   return {
     cwd,
-    sessionManager: {
-      getEntries: mock(() => [] as any[]),
-    },
     // Signatures mirror the real pi UI surface so mock.calls stays typed.
     ui: {
-      addAutocompleteProvider: mock((_factory: (current: any) => any) => undefined),
+      addAutocompleteProvider: mock(
+        (_factory: (current: any) => any) => undefined,
+      ),
       notify: mock((_message: string, _level?: string) => undefined),
       setEditorComponent: mock(() => undefined),
       setStatus: mock((_key: string, _text?: string) => undefined),
@@ -194,8 +209,8 @@ function createContext(cwd = "/tmp/workspace") {
   };
 }
 
-async function start(mode?: string, cwd?: string, flags: Record<string, unknown> = {}) {
-  const setup = createPi(mode, flags);
+async function start(cwd?: string, flags: Record<string, unknown> = {}) {
+  const setup = createPi(flags);
   const ctx = createContext(cwd);
   fffExtension(setup.pi as any);
 
@@ -215,7 +230,11 @@ function currentProvider(
 ) {
   return {
     getSuggestions: mock(async () => result),
-    applyCompletion: mock(() => ({ lines: ["applied"], cursorLine: 0, cursorCol: 7 })),
+    applyCompletion: mock(() => ({
+      lines: ["applied"],
+      cursorLine: 0,
+      cursorCol: 7,
+    })),
     shouldTriggerFileCompletion: mock(() => false),
   };
 }
@@ -226,7 +245,6 @@ function abortOptions() {
 
 const CONFIG_ENV_KEYS = [
   "PI_CODING_AGENT_DIR",
-  "PI_FFF_MODE",
   "FFF_FRECENCY_DB",
   "FFF_HISTORY_DB",
   "FFF_ENABLE_ROOT_SCAN",
@@ -265,7 +283,6 @@ afterAll(() => {
 describe("pi-fff global config", () => {
   test("applies every supported startup option", async () => {
     writeConfig({
-      mode: "override",
       frecencyDbPath: "/config/frecency",
       historyDbPath: "/config/history",
       enableFsRootScanning: true,
@@ -274,13 +291,13 @@ describe("pi-fff global config", () => {
     });
 
     const setup = await start();
-    const toolNames = setup.pi.registerTool.mock.calls.map(([tool]) => tool.name);
-
-    expect(toolNames).toEqual(
-      expect.arrayContaining(["ffgrep", "fffind", "grep", "find"]),
+    const toolNames = setup.pi.registerTool.mock.calls.map(
+      ([tool]) => tool.name,
     );
+
+    expect(toolNames).toEqual(["grep", "find"]);
     expect(setup.pi.setActiveTools).toHaveBeenLastCalledWith(
-      expect.not.arrayContaining(["ffgrep", "fffind"]),
+      expect.arrayContaining(["grep", "find"]),
     );
     expect(createCalls[0]).toEqual({
       basePath: "/tmp/workspace",
@@ -296,28 +313,27 @@ describe("pi-fff global config", () => {
 
   test("keeps flag and environment precedence", async () => {
     writeConfig({
-      mode: "tools-only",
       frecencyDbPath: "/config/frecency",
       historyDbPath: "/config/history",
       enableFsRootScanning: true,
       enableHomeDirScanning: false,
     });
-    process.env.PI_FFF_MODE = "override";
     process.env.FFF_FRECENCY_DB = "/env/frecency";
     process.env.FFF_HISTORY_DB = "/env/history";
     process.env.FFF_ENABLE_ROOT_SCAN = "1";
     process.env.FFF_ENABLE_HOME_SCAN = "1";
     process.env.FFF_FOLLOW_SYMLINKS = "1";
 
-    const setup = await start("tools-and-ui", undefined, {
+    const setup = await start(undefined, {
       "fff-frecency-db": "/flag/frecency",
       "fff-enable-root-scan": false,
       "fff-follow-symlinks": false,
     });
-    const toolNames = setup.pi.registerTool.mock.calls.map(([tool]) => tool.name);
+    const toolNames = setup.pi.registerTool.mock.calls.map(
+      ([tool]) => tool.name,
+    );
 
-    expect(toolNames).toContain("ffgrep");
-    expect(toolNames).toContain("fffind");
+    expect(toolNames).toEqual(["grep", "find"]);
     expect(createCalls[0]).toEqual({
       basePath: "/tmp/workspace",
       frecencyDbPath: "/flag/frecency",
@@ -337,22 +353,8 @@ describe("pi-fff global config", () => {
 
     const setup = await start();
 
-    expect((createCalls[0] as { followSymlinks: boolean }).followSymlinks).toBe(false);
-    await shutdown(setup);
-  });
-
-  test("falls through invalid flag and environment modes", async () => {
-    writeConfig({ mode: "override" });
-    process.env.PI_FFF_MODE = "invalid-env-mode";
-
-    const setup = await start("invalid-flag-mode");
-    const toolNames = setup.pi.registerTool.mock.calls.map(([tool]) => tool.name);
-
-    expect(toolNames).toEqual(
-      expect.arrayContaining(["ffgrep", "fffind", "grep", "find"]),
-    );
-    expect(setup.pi.setActiveTools).toHaveBeenLastCalledWith(
-      expect.not.arrayContaining(["ffgrep", "fffind"]),
+    expect((createCalls[0] as { followSymlinks: boolean }).followSymlinks).toBe(
+      false,
     );
     await shutdown(setup);
   });
@@ -362,226 +364,124 @@ function writeConfig(config: Record<string, unknown>): void {
   fs.writeFileSync(configPath, JSON.stringify(config));
 }
 
-describe("pi-fff session mode", () => {
-  test("pre-registers FFF renderers before restoring the saved mode", async () => {
-    const setup = createPi("tools-and-ui");
+// 固定 override 行为：grep/find 定义在扩展加载期注册，首次会话准备时去重合并进
+// 激活工具列表；opt-out 目录则完全不触碰激活列表，只通知原因。
+describe("pi-fff tool registration and activation", () => {
+  test("registers grep/find at load time and activates on session_start", async () => {
+    const setup = createPi();
     const ctx = createContext();
-    ctx.sessionManager.getEntries.mockReturnValue([
-      { type: "custom", customType: "fff-mode", data: { mode: "override" } },
-    ]);
     fffExtension(setup.pi as any);
 
-    expect(setup.pi.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual([
-      "ffgrep",
-      "fffind",
-    ]);
+    // 加载期：定义已注册，尚未触碰激活列表。
+    expect(setup.pi.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual(
+      ["grep", "find"],
+    );
     expect(setup.pi.setActiveTools).not.toHaveBeenCalled();
+
+    // pi 内建 grep 已处于激活态：合并必须去重并保持顺序。
+    setup.pi.getActiveTools.mockReturnValue(["read", "grep"]);
     await setup.events.get("session_start")?.({ reason: "startup" }, ctx);
 
+    expect(setup.pi.setActiveTools).toHaveBeenLastCalledWith([
+      "read",
+      "grep",
+      "find",
+    ]);
+
     const tools = setup.pi.registerTool.mock.calls.map(([tool]) => tool);
-    const toolNames = tools.map((tool) => tool.name);
-    expect(toolNames).toEqual(
-      expect.arrayContaining(["ffgrep", "fffind", "grep", "find"]),
-    );
-    const historicalGrep = tools.find((tool) => tool.name === "ffgrep");
-    const activeGrep = tools.find((tool) => tool.name === "grep");
+    const grep = tools.find((tool) => tool.name === "grep");
+    expect(grep).toBeDefined();
     const theme = {
       bold: (text: string) => text,
       fg: (_color: string, text: string) => text,
     };
-    const historicalCall = historicalGrep.renderCall(
-      { pattern: "TODO", path: "." },
-      theme,
-      { state: {}, invalidate: mock(() => undefined), isError: false },
-    );
-    const activeCall = activeGrep.renderCall({ pattern: "TODO", path: "." }, theme, {
+    const call = grep!.renderCall({ pattern: "TODO", path: "." }, theme, {
       state: {},
       invalidate: mock(() => undefined),
       isError: false,
     });
-    expect(historicalCall.render(80)).toEqual(["ffgrep /TODO/ in ."]);
-    expect(activeCall.render(80)).toEqual(["grep /TODO/ in ."]);
-    expect(activeGrep.promptGuidelines[0].startsWith("grep:")).toBe(true);
-    expect(setup.pi.setActiveTools).toHaveBeenCalledWith(
-      expect.arrayContaining(["read", "grep", "find"]),
-    );
-    expect(setup.pi.setActiveTools).toHaveBeenLastCalledWith(
-      expect.not.arrayContaining(["ffgrep", "fffind"]),
-    );
-
-    await setup.commands.get("fff-mode").handler("", ctx);
-    expect(ctx.ui.notify).toHaveBeenLastCalledWith(
-      "Current mode: 'override' (flag: tools-and-ui)",
-      "info",
-    );
-    await shutdown(setup);
-  });
-
-  test("prunes auto-activated FFF names when override is the final mode", async () => {
-    const setup = createPi("tools-and-ui");
-    const ctx = createContext();
-    ctx.sessionManager.getEntries.mockReturnValue([
-      { type: "custom", customType: "fff-mode", data: { mode: "override" } },
-    ]);
-    fffExtension(setup.pi as any);
-
-    // Pi core activates every newly registered tool, so the early FFF
-    // registrations are active by the time session_start runs.
-    setup.pi.getActiveTools.mockReturnValue(["read", "ffgrep", "fffind"]);
-    await setup.events.get("session_start")?.({ reason: "startup" }, ctx);
-
-    expect(setup.pi.setActiveTools).toHaveBeenLastCalledWith(
-      expect.arrayContaining(["read", "grep", "find"]),
-    );
-    expect(setup.pi.setActiveTools).toHaveBeenLastCalledWith(
-      expect.not.arrayContaining(["ffgrep", "fffind"]),
-    );
+    expect(call.render(80)).toEqual(["grep /TODO/ in ."]);
+    expect(grep!.promptGuidelines[0].startsWith("grep:")).toBe(true);
     await shutdown(setup);
   });
 
   test("registers tools before an unbound SDK session's first agent turn", async () => {
-    const setup = createPi("override");
+    const setup = createPi();
     const ctx = createContext();
     fffExtension(setup.pi as any);
 
-    expect(setup.pi.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual([
-      "ffgrep",
-      "fffind",
-    ]);
+    expect(setup.pi.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual(
+      ["grep", "find"],
+    );
     expect(setup.pi.setActiveTools).not.toHaveBeenCalled();
+
     await setup.events.get("before_agent_start")?.({}, ctx);
 
-    const toolNames = setup.pi.registerTool.mock.calls.map(([tool]) => tool.name);
-    expect(toolNames).toEqual(
-      expect.arrayContaining(["ffgrep", "fffind", "grep", "find"]),
-    );
     expect(setup.pi.setActiveTools).toHaveBeenLastCalledWith(
-      expect.not.arrayContaining(["ffgrep", "fffind"]),
+      expect.arrayContaining(["grep", "find"]),
     );
+    expect(createCalls).toHaveLength(0);
+
+    // sessionPrepared 重入守卫：随后再触发一次 session_start 不得重复激活。
+    await setup.events.get("session_start")?.({ reason: "startup" }, ctx);
+    expect(setup.pi.setActiveTools).toHaveBeenCalledTimes(1);
+    await shutdown(setup);
+  });
+
+  // SDK 直调场景只有 before_agent_start：opt-out 目录同样只通知一次原因，
+  // 不激活工具、不初始化索引。
+  test("opted-out cwd is notified once when only before_agent_start fires", async () => {
+    process.env.FFF_ENABLE_HOME_SCAN = "0";
+    const setup = createPi();
+    const ctx = createContext(os.homedir());
+    fffExtension(setup.pi as any);
+
+    await setup.events.get("before_agent_start")?.({}, ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
+    const [message, level] = ctx.ui.notify.mock.calls[0];
+    expect(message).toContain("enableHomeDirScanning");
+    expect(level).toBe("warning");
+    // pi 无条件激活扩展工具：opt-out 时显式把 grep/find 从激活集移除。
+    expect(setup.pi.setActiveTools).toHaveBeenLastCalledWith(["read"]);
     expect(createCalls).toHaveLength(0);
     await shutdown(setup);
   });
 
-  test("keeps the active mode unchanged until a tool-name switch is reloaded", async () => {
-    const setup = await start();
-
-    await setup.commands.get("fff-mode").handler("override", setup.ctx);
-
-    expect(setup.pi.appendEntry).toHaveBeenCalledWith("fff-mode", {
-      mode: "override",
-    });
-    expect(setup.ctx.ui.notify).toHaveBeenLastCalledWith(
-      "Mode 'override' saved. Run /reload to apply the tool name change.",
-      "info",
-    );
-
-    await setup.commands.get("fff-mode").handler("", setup.ctx);
-    expect(setup.ctx.ui.notify).toHaveBeenLastCalledWith(
-      "Current mode: 'tools-and-ui' (flag: unset)",
-      "info",
-    );
-    await shutdown(setup);
-  });
-});
-
-// Regression for #855: pi carries the active tool list and the session entries across
-// /reload, but drops the extension instance, so a mode switch must not leave the
-// previous mode's tool names active.
-describe("pi-fff mode switch across /reload", () => {
-  // Pi's own default active set: builtin grep/find ship inactive (dist/core/sdk.js).
-  const PI_DEFAULT_ACTIVE = ["read", "bash", "edit", "write"];
-
-  function createReloadableSession(
-    startupMode?: string,
-    active = PI_DEFAULT_ACTIVE,
-    cwd?: string,
-  ) {
-    let activeTools = [...active];
-    const entries: unknown[] = [];
-
-    async function load() {
-      const setup = createPi(startupMode);
-      setup.pi.getActiveTools.mockImplementation(() => [...activeTools]);
-      setup.pi.setActiveTools.mockImplementation((names: string[]) => {
-        activeTools = [...names];
-      });
-      setup.pi.appendEntry.mockImplementation((customType: string, data: unknown) => {
-        entries.push({ type: "custom", customType, data });
-      });
-
-      const ctx = createContext(cwd);
-      ctx.sessionManager.getEntries.mockReturnValue(entries as any[]);
-      fffExtension(setup.pi as any);
-      await setup.events.get("session_start")?.({ reason: "startup" }, ctx);
-      return { ...setup, ctx };
-    }
-
-    return { load, getActiveTools: () => activeTools };
-  }
-
-  test("drops override tool names when switching back to a FFF-named mode", async () => {
-    const session = createReloadableSession("override");
-
-    const first = await session.load();
-    expect(session.getActiveTools()).toEqual([...PI_DEFAULT_ACTIVE, "grep", "find"]);
-    await first.commands.get("fff-mode").handler("tools-and-ui", first.ctx);
-    await shutdown(first);
-
-    const second = await session.load();
-    expect(session.getActiveTools()).toEqual([...PI_DEFAULT_ACTIVE, "ffgrep", "fffind"]);
-    await shutdown(second);
-  });
-
-  test("drops FFF tool names when switching to override", async () => {
-    const session = createReloadableSession("tools-and-ui");
-
-    const first = await session.load();
-    expect(session.getActiveTools()).toEqual([...PI_DEFAULT_ACTIVE, "ffgrep", "fffind"]);
-    await first.commands.get("fff-mode").handler("override", first.ctx);
-    await shutdown(first);
-
-    const second = await session.load();
-    expect(session.getActiveTools()).toEqual([...PI_DEFAULT_ACTIVE, "grep", "find"]);
-    await shutdown(second);
-  });
-
-  test("keeps user-enabled builtin grep and find when override was never used", async () => {
-    const session = createReloadableSession("tools-and-ui", [
-      ...PI_DEFAULT_ACTIVE,
-      "grep",
-      "find",
-    ]);
-
-    const setup = await session.load();
-
-    expect(session.getActiveTools()).toEqual([
-      ...PI_DEFAULT_ACTIVE,
-      "grep",
-      "find",
-      "ffgrep",
-      "fffind",
-    ]);
-    await shutdown(setup);
-  });
-
-  // #857 keeps pi's built-ins when the cwd is opted out of indexing, so the
-  // override prune must not deactivate them behind its back.
-  test("keeps builtin grep and find when override falls back on an opted-out cwd", async () => {
+  // 激活集残留 grep/find（用户手动启用过内置工具）时，opt-out 会话中调用会命中
+  // ensureFinder 的防御性 reject，携带禁用原因而非伪装成初始化失败。
+  test("invoking grep in an opted-out cwd rejects with the opt-out reason", async () => {
     process.env.FFF_ENABLE_HOME_SCAN = "0";
-    const session = createReloadableSession(
-      "override",
-      [...PI_DEFAULT_ACTIVE, "grep", "find"],
-      os.homedir(),
-    );
+    const setup = await start(os.homedir());
+    const tools = setup.pi.registerTool.mock.calls.map(([tool]) => tool);
+    const grep = tools.find((tool) => tool.name === "grep");
+    expect(grep).toBeDefined();
 
-    const setup = await session.load();
+    await expect(
+      grep!.execute("call-1", { pattern: "TODO" }, abortOptions().signal),
+    ).rejects.toThrow("search is disabled");
 
-    expect(session.getActiveTools()).toEqual([
-      ...PI_DEFAULT_ACTIVE,
+    await shutdown(setup);
+  });
+
+  // 会话替换/新会话复用同一扩展实例：session_shutdown 复位守卫后，新的
+  // session_start 应重新激活 grep/find（工厂随销毁后需重建）。
+  test("re-prepares after session_shutdown so a replacement session re-activates", async () => {
+    const setup = createPi();
+    const ctx = createContext();
+    fffExtension(setup.pi as any);
+
+    await setup.events.get("session_start")?.({ reason: "startup" }, ctx);
+    expect(setup.pi.setActiveTools).toHaveBeenCalledTimes(1);
+
+    await shutdown(setup);
+    await setup.events.get("session_start")?.({ reason: "startup" }, ctx);
+
+    expect(setup.pi.setActiveTools).toHaveBeenCalledTimes(2);
+    expect(setup.pi.setActiveTools).toHaveBeenLastCalledWith([
+      "read",
       "grep",
       "find",
-      "ffgrep",
-      "fffind",
     ]);
     await shutdown(setup);
   });
@@ -590,7 +490,7 @@ describe("pi-fff mode switch across /reload", () => {
 // Regression for #743: launching from $HOME must be visible and interruptible.
 describe("pi-fff $HOME scan warning", () => {
   test("warns and pins a status when cwd is $HOME", async () => {
-    const setup = await start(undefined, os.homedir());
+    const setup = await start(os.homedir());
 
     expect(setup.ctx.ui.notify).toHaveBeenCalledTimes(1);
     const [message, level] = setup.ctx.ui.notify.mock.calls[0];
@@ -611,7 +511,7 @@ describe("pi-fff $HOME scan warning", () => {
   });
 
   test("clears the status once the scan settles", async () => {
-    const setup = await start(undefined, os.homedir());
+    const setup = await start(os.homedir());
 
     expect(setup.ctx.ui.setStatus).toHaveBeenLastCalledWith("fff", undefined);
     await shutdown(setup);
@@ -628,7 +528,7 @@ describe("pi-fff $HOME scan warning", () => {
         isWarmupComplete: false,
       },
     });
-    const setup = await start(undefined, os.homedir());
+    const setup = await start(os.homedir());
 
     const lastStatus = setup.ctx.ui.setStatus.mock.calls.at(-1);
     expect(lastStatus?.[0]).toBe("fff");
@@ -639,14 +539,16 @@ describe("pi-fff $HOME scan warning", () => {
     expect(setup.ctx.ui.setStatus).toHaveBeenLastCalledWith("fff", undefined);
   });
 
-  // #857: the opt-out must skip the picker, not surface the native refusal as an
-  // init error, and must not shadow pi's built-in search tools in override mode.
+  // #857: opt-out 必须跳过索引初始化、不得把原生拒绝当成初始化错误。pi 会无条件
+  // 激活扩展工具，opt-out 分支显式从激活集移除 grep/find（注册定义仍保留，
+  // 渲染器可用）。
   test("skips the picker and stays out of the way when home scanning is off", async () => {
     process.env.FFF_ENABLE_HOME_SCAN = "0";
-    const setup = await start("override", os.homedir());
+    const setup = await start(os.homedir());
 
     expect(createCalls).toHaveLength(0);
     expect(setup.ctx.ui.setStatus).not.toHaveBeenCalled();
+    expect(setup.pi.setActiveTools).toHaveBeenLastCalledWith(["read"]);
 
     const [message, level] = setup.ctx.ui.notify.mock.calls[0];
     expect(setup.ctx.ui.notify).toHaveBeenCalledTimes(1);
@@ -654,15 +556,18 @@ describe("pi-fff $HOME scan warning", () => {
     expect(message).not.toContain("FFF init failed");
     expect(message).toContain("enableHomeDirScanning");
 
-    const toolNames = setup.pi.registerTool.mock.calls.map(([tool]) => tool.name);
-    expect(toolNames).toEqual(["ffgrep", "fffind"]);
+    const toolNames = setup.pi.registerTool.mock.calls.map(
+      ([tool]) => tool.name,
+    );
+    expect(toolNames).toEqual(["grep", "find"]);
     await shutdown(setup);
   });
 
   test("skips the picker at the filesystem root without root scanning", async () => {
-    const setup = await start(undefined, path.parse(process.cwd()).root);
+    const setup = await start(path.parse(process.cwd()).root);
 
     expect(createCalls).toHaveLength(0);
+    expect(setup.pi.setActiveTools).toHaveBeenLastCalledWith(["read"]);
     const [message, level] = setup.ctx.ui.notify.mock.calls[0];
     expect(level).toBe("warning");
     expect(message).toContain("enableFsRootScanning");
@@ -670,17 +575,19 @@ describe("pi-fff $HOME scan warning", () => {
   });
 
   test("still indexes $HOME when the opt-out is not set", async () => {
-    const setup = await start(undefined, os.homedir());
+    const setup = await start(os.homedir());
 
     expect(createCalls).toHaveLength(1);
-    expect((createCalls[0] as { basePath: string }).basePath).toBe(os.homedir());
+    expect((createCalls[0] as { basePath: string }).basePath).toBe(
+      os.homedir(),
+    );
     await shutdown(setup);
   });
 
   // #806: muting the warning must not turn the scan or the footer off.
   test("FFF_WARN_HOME_SCAN=0 mutes the warning but keeps indexing", async () => {
     process.env.FFF_WARN_HOME_SCAN = "0";
-    const setup = await start(undefined, os.homedir());
+    const setup = await start(os.homedir());
 
     expect(setup.ctx.ui.notify).not.toHaveBeenCalled();
     expect(setup.ctx.ui.setStatus).toHaveBeenCalledWith(
@@ -688,13 +595,14 @@ describe("pi-fff $HOME scan warning", () => {
       "Agent is indexing $HOME, this can lead to high CPU",
     );
     expect(
-      (createCalls[0] as { enableHomeDirScanning: boolean }).enableHomeDirScanning,
+      (createCalls[0] as { enableHomeDirScanning: boolean })
+        .enableHomeDirScanning,
     ).toBe(true);
     await shutdown(setup);
   });
 
   test("--fff-warn-home-scan=false mutes the warning", async () => {
-    const setup = await start(undefined, os.homedir(), {
+    const setup = await start(os.homedir(), {
       "fff-warn-home-scan": false,
     });
 
@@ -704,7 +612,7 @@ describe("pi-fff $HOME scan warning", () => {
 
   test("warnOnHomeDirScan in the config file mutes the warning", async () => {
     writeConfig({ warnOnHomeDirScan: false });
-    const setup = await start(undefined, os.homedir());
+    const setup = await start(os.homedir());
 
     expect(setup.ctx.ui.notify).not.toHaveBeenCalled();
     await shutdown(setup);
@@ -763,9 +671,17 @@ describe("pi-fff autocomplete registration", () => {
     const current = currentProvider();
     const provider = factory(current);
 
-    const result = await provider.getSuggestions(["hello"], 0, 5, abortOptions());
+    const result = await provider.getSuggestions(
+      ["hello"],
+      0,
+      5,
+      abortOptions(),
+    );
 
-    expect(result).toEqual({ items: [{ value: "base", label: "base" }], prefix: "ba" });
+    expect(result).toEqual({
+      items: [{ value: "base", label: "base" }],
+      prefix: "ba",
+    });
     expect(current.getSuggestions).toHaveBeenCalledTimes(1);
     expect(finders[0].mixedSearch).not.toHaveBeenCalled();
   });
@@ -813,7 +729,12 @@ describe("pi-fff autocomplete registration", () => {
     const current = currentProvider();
     const provider = factory(current);
 
-    const result = await provider.getSuggestions(["open @src"], 0, 9, abortOptions());
+    const result = await provider.getSuggestions(
+      ["open @src"],
+      0,
+      9,
+      abortOptions(),
+    );
 
     expect(result).toEqual({
       prefix: "@src",
@@ -843,38 +764,18 @@ describe("pi-fff autocomplete registration", () => {
     const current = currentProvider();
     const provider = factory(current);
 
-    const result = await provider.getSuggestions(["@src"], 0, 4, abortOptions());
+    const result = await provider.getSuggestions(
+      ["@src"],
+      0,
+      4,
+      abortOptions(),
+    );
 
-    expect(result).toEqual({ items: [{ value: "base", label: "base" }], prefix: "ba" });
+    expect(result).toEqual({
+      items: [{ value: "base", label: "base" }],
+      prefix: "ba",
+    });
     expect(current.getSuggestions).toHaveBeenCalledTimes(1);
-  });
-
-  test("tools-only mode bypasses FFF mentions and delegates", async () => {
-    const { ctx } = await start("tools-only");
-    const factory = ctx.ui.addAutocompleteProvider.mock.calls[0][0];
-    const current = currentProvider();
-    const provider = factory(current);
-
-    const result = await provider.getSuggestions(["@src"], 0, 4, abortOptions());
-
-    expect(result).toEqual({ items: [{ value: "base", label: "base" }], prefix: "ba" });
-    expect(current.getSuggestions).toHaveBeenCalledTimes(1);
-    expect(finders[0].mixedSearch).not.toHaveBeenCalled();
-  });
-
-  test("/fff-mode changes mention behavior without touching the editor", async () => {
-    const { commands, ctx, pi } = await start();
-    const factory = ctx.ui.addAutocompleteProvider.mock.calls[0][0];
-    const current = currentProvider();
-    const provider = factory(current);
-
-    await commands.get("fff-mode").handler("tools-only", ctx);
-    await provider.getSuggestions(["@src"], 0, 4, abortOptions());
-
-    expect(pi.appendEntry).toHaveBeenCalledWith("fff-mode", { mode: "tools-only" });
-    expect(current.getSuggestions).toHaveBeenCalledTimes(1);
-    expect(finders[0].mixedSearch).not.toHaveBeenCalled();
-    expect(ctx.ui.setEditorComponent).not.toHaveBeenCalled();
   });
 
   test("completion application and file-completion trigger delegate to current provider", async () => {
@@ -892,7 +793,11 @@ describe("pi-fff autocomplete registration", () => {
     );
     const shouldTrigger = provider.shouldTriggerFileCompletion(["@src"], 0, 4);
 
-    expect(applied).toEqual({ lines: ["applied"], cursorLine: 0, cursorCol: 7 });
+    expect(applied).toEqual({
+      lines: ["applied"],
+      cursorLine: 0,
+      cursorCol: 7,
+    });
     expect(shouldTrigger).toBe(false);
     expect(current.applyCompletion).toHaveBeenCalledTimes(1);
     expect(current.shouldTriggerFileCompletion).toHaveBeenCalledTimes(1);
@@ -916,51 +821,87 @@ describe("compact tool rendering", () => {
     return tool;
   }
 
-  test("ffgrep renders collapsed by default and full when pi reports expanded", async () => {
-    const setup = await start("tools-and-ui");
-    const tool = toolByName(setup, "ffgrep");
-    const context = { state: {}, invalidate: mock(() => undefined), isError: false };
+  test("grep renders collapsed by default and full when pi reports expanded", async () => {
+    const setup = await start();
+    const tool = toolByName(setup, "grep");
+    const context = {
+      state: {},
+      invalidate: mock(() => undefined),
+      isError: false,
+    };
 
     const call = tool.renderCall(
       { pattern: "TODO", path: ".", limit: 3, context: 2 },
       theme,
       context,
     );
-    expect(call.render(80)).toEqual(["ffgrep /TODO/ in . (limit 3, context 2)"]);
+    expect(call.render(80)).toEqual(["grep /TODO/ in . (limit 3, context 2)"]);
 
-    const defaultCall = tool.renderCall({ pattern: "TODO", path: "." }, theme, context);
-    expect(defaultCall.render(80)).toEqual(["ffgrep /TODO/ in ."]);
+    const defaultCall = tool.renderCall(
+      { pattern: "TODO", path: "." },
+      theme,
+      context,
+    );
+    expect(defaultCall.render(80)).toEqual(["grep /TODO/ in ."]);
 
     const content = [{ type: "text", text: "first\nsecond\nthird" }];
-    const collapsed = tool.renderResult({ content }, { expanded: false }, theme, context);
+    const collapsed = tool.renderResult(
+      { content },
+      { expanded: false },
+      theme,
+      context,
+    );
     expect(collapsed.render(80)).toEqual(["first ... (2 more lines)"]);
 
-    const expanded = tool.renderResult({ content }, { expanded: true }, theme, context);
+    const expanded = tool.renderResult(
+      { content },
+      { expanded: true },
+      theme,
+      context,
+    );
     expect(expanded.text).toBe("first\nsecond\nthird");
   });
 
-  test("fffind result follows the expanded option", async () => {
-    const setup = await start("tools-and-ui");
-    const tool = toolByName(setup, "fffind");
-    const context = { state: {}, invalidate: mock(() => undefined), isError: false };
+  test("find result follows the expanded option", async () => {
+    const setup = await start();
+    const tool = toolByName(setup, "find");
+    const context = {
+      state: {},
+      invalidate: mock(() => undefined),
+      isError: false,
+    };
 
-    const call = tool.renderCall({ pattern: "index", path: "src" }, theme, context);
-    expect(call.render(80)).toEqual(["fffind index in src"]);
+    const call = tool.renderCall(
+      { pattern: "index", path: "src" },
+      theme,
+      context,
+    );
+    expect(call.render(80)).toEqual(["find index in src"]);
 
     const content = [{ type: "text", text: "src/index.ts\nsrc/main.ts" }];
-    const collapsed = tool.renderResult({ content }, { expanded: false }, theme, context);
+    const collapsed = tool.renderResult(
+      { content },
+      { expanded: false },
+      theme,
+      context,
+    );
     expect(collapsed.render(80)).toEqual(["src/index.ts ... (1 more lines)"]);
 
-    const expanded = tool.renderResult({ content }, { expanded: true }, theme, context);
+    const expanded = tool.renderResult(
+      { content },
+      { expanded: true },
+      theme,
+      context,
+    );
     expect(expanded.text).toBe("src/index.ts\nsrc/main.ts");
   });
 });
 
-describe("ffgrep per-file cap (#825)", () => {
+describe("grep per-file cap (#825)", () => {
   function grepTool(setup: { pi: { registerTool: ReturnType<typeof mock> } }) {
     const tool = setup.pi.registerTool.mock.calls
       .map(([t]) => t)
-      .find((t) => t.name === "ffgrep" || t.name === "grep");
+      .find((t) => t.name === "grep");
     expect(tool).toBeDefined();
     return tool;
   }
@@ -984,9 +925,13 @@ describe("ffgrep per-file cap (#825)", () => {
       };
     };
 
-    const setup = await start("tools-and-ui");
+    const setup = await start();
     const tool = grepTool(setup);
-    await tool.execute("call-1", { pattern: "TODO", limit: 20 }, abortOptions().signal);
+    await tool.execute(
+      "call-1",
+      { pattern: "TODO", limit: 20 },
+      abortOptions().signal,
+    );
 
     expect(captured).toBeDefined();
     expect(captured.pageSize).toBe(20);

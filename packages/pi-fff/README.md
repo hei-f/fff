@@ -4,12 +4,11 @@ A [pi](https://github.com/badlogic/pi-mono) extension that replaces the built-in
 
 ## What it does
 
-| Built-in tool | pi-fff replacement | Improvement |
-|---|---|---|
-| `find` (spawns `fd`) | `fffind` (FFF `fileSearch`) | Fuzzy matching, frecency ranking, git-aware, pre-indexed |
-| `grep` (spawns `rg`) | `ffgrep` (FFF `grep`) | SIMD-accelerated, frecency-ordered, mmap-cached, no subprocess |
-| *(none)* | `fff-multi-grep` (FFF `multiGrep`) | OR-logic multi-pattern search via Aho-Corasick |
-| `@` file autocomplete (fd-backed) | `@` file autocomplete (FFF-backed, default) | Fuzzy ranking from FFF index/frecency |
+| Built-in tool                     | pi-fff replacement                          | Improvement                                                    |
+| --------------------------------- | ------------------------------------------- | -------------------------------------------------------------- |
+| `find` (spawns `fd`)              | `find` (FFF `fileSearch`)                   | Fuzzy matching, frecency ranking, git-aware, pre-indexed       |
+| `grep` (spawns `rg`)              | `grep` (FFF `grep`)                         | SIMD-accelerated, frecency-ordered, mmap-cached, no subprocess |
+| `@` file autocomplete (fd-backed) | `@` file autocomplete (FFF-backed, default) | Fuzzy ranking from FFF index/frecency                          |
 
 ### Key advantages over built-in tools
 
@@ -25,6 +24,7 @@ A [pi](https://github.com/badlogic/pi-mono) extension that replaces the built-in
 ## Install
 
 Requirements:
+
 - pi
 
 ### Install as a pi package
@@ -75,62 +75,44 @@ Or test directly:
 pi -e /path/to/fff/packages/pi-fff/src/index.ts
 ```
 
-This extension registers FFF-powered tools (`fffind`, `ffgrep`, `fff-multi-grep`) alongside pi's built-in tools.
+After install, this extension registers FFF-powered `grep` and `find` tools that override pi's built-in ones.
 
 ## Tools
 
-### `ffgrep`
+### `grep`
 
-Search file contents. Smart case, plain text by default, regex optional.
+Search file contents. Smart case, auto-detects regex vs literal, git-aware.
 
 Parameters:
+
 - `pattern` — search text or regex
 - `path` — directory/file constraint (e.g. `src/`, `*.ts`)
-- `ignoreCase` — force case-insensitive
-- `literal` — treat as literal string (default: true)
+- `exclude` — exclude paths (comma/space-separated or array; leading `!` optional, e.g. `test/,*.min.js`)
+- `caseSensitive` — force case-sensitive matching (default: smart case)
 - `context` — context lines around matches
-- `limit` — max matches (default: 100)
+- `limit` — max matches (default: 20)
 - `cursor` — pagination cursor from previous result
 
-### `fffind`
+### `find`
 
-Fuzzy file name search. Frecency-ranked.
+Fuzzy file name search. Frecency-ranked. Matches the whole repo-relative path, not just the filename.
 
 Parameters:
+
 - `pattern` — fuzzy query (e.g. `main.ts`, `src/ config`)
-- `path` — directory constraint
-- `limit` — max results (default: 200)
-
-### `fff-multi-grep`
-
-OR-logic multi-pattern content search. SIMD-accelerated Aho-Corasick.
-
-Parameters:
-- `patterns` — array of literal patterns (OR logic)
-- `constraints` — file constraints (e.g. `*.{ts,tsx} !test/`)
-- `context` — context lines
-- `limit` — max matches (default: 100)
-- `cursor` — pagination cursor
+- `path` — directory/file constraint (e.g. `src/`, `*.ts`)
+- `exclude` — exclude paths (comma/space-separated or array; leading `!` optional, e.g. `test/,*.min.js`)
+- `limit` — max results per page (default: 30)
+- `cursor` — pagination cursor from previous result
 
 ## Commands
 
 - `/fff-health` — show FFF status (indexed files, git info, frecency/history DB status)
 - `/fff-rescan` — trigger a file rescan
-- `/fff-mode <mode>` — switch mode (tool name changes require `/reload`)
 
-## Modes
+## How it works
 
-- `tools-and-ui` (default): registers `fffind`, `ffgrep`, `fff-multi-grep` as additional tools + FFF-backed `@` autocomplete
-- `tools-only`: additional tools only; keep pi's default `@` autocomplete
-- `override`: replaces pi's built-in `find`, `grep` and adds `multi_grep` + FFF-backed `@` autocomplete
-
-Startup mode precedence:
-1. `--fff-mode <mode>` CLI flag
-2. `PI_FFF_MODE=<mode>` environment variable
-3. `mode` in the global config file
-4. default (`tools-and-ui`)
-
-When a session resumes, its most recent `/fff-mode` selection takes precedence over the startup resolution above. Switching to or from `override` takes effect after `/reload`, when the tools are registered again.
+The extension works in a single fixed mode: it always registers `grep` and `find` tools that replace pi's built-ins after install, and activates them when a session starts. There is no mode to configure or switch.
 
 ## Configuration
 
@@ -139,7 +121,6 @@ For persistent global configuration, create `pi-fff.json` in pi's agent director
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/dmtrKovalenko/fff/main/packages/pi-fff/pi-fff.schema.json",
-  "mode": "override",
   "frecencyDbPath": "/path/to/frecency",
   "historyDbPath": "/path/to/history",
   "enableFsRootScanning": false,
@@ -151,26 +132,24 @@ For persistent global configuration, create `pi-fff.json` in pi's agent director
 
 All fields are optional:
 
-| Field | Type | Default |
-|---|---|---|
-| `$schema` | non-empty string | none |
-| `mode` | `tools-and-ui`, `tools-only`, or `override` | `tools-and-ui` |
-| `frecencyDbPath` | non-empty string | See [Data](#data) |
-| `historyDbPath` | non-empty string | See [Data](#data) |
-| `enableFsRootScanning` | boolean | `false` |
-| `enableHomeDirScanning` | boolean | `true` |
-| `warnOnHomeDirScan` | boolean | `true` |
-| `followSymlinks` | boolean | `true` |
+| Field                   | Type             | Default           |
+| ----------------------- | ---------------- | ----------------- |
+| `$schema`               | non-empty string | none              |
+| `frecencyDbPath`        | non-empty string | See [Data](#data) |
+| `historyDbPath`         | non-empty string | See [Data](#data) |
+| `enableFsRootScanning`  | boolean          | `false`           |
+| `enableHomeDirScanning` | boolean          | `true`            |
+| `warnOnHomeDirScan`     | boolean          | `true`            |
+| `followSymlinks`        | boolean          | `true`            |
 
-Starting a session in a directory the config opts out of indexing (`$HOME` with `enableHomeDirScanning: false`, `/` with `enableFsRootScanning: false`) disables FFF workspace search for that session: the extension reports it once as a warning and keeps the `ffgrep`/`fffind` names even in `override` mode, so pi's built-in `grep`/`find` stay reachable.
+Starting a session in a directory the config opts out of indexing (`$HOME` with `enableHomeDirScanning: false`, `/` with `enableFsRootScanning: false`) disables FFF search for that session: pi unconditionally activates extension tools, so the extension removes `grep`/`find` from the active tool set and notifies the user once with the reason and how to enable indexing.
 
-CLI flags take precedence over environment variables, which take precedence over this file. A missing file is ignored. Malformed JSON, unknown fields, and invalid values stop the extension from loading and report the file path and error. `/fff-mode` changes the current session; it does not edit this file.
+CLI flags take precedence over environment variables, which take precedence over this file. A missing file is ignored. Malformed JSON, unknown fields, and invalid values stop the extension from loading and report the file path and error.
 
-The file is global only. Project-level config cannot safely control tool names because pi decides which tools an extension registers before project configuration can be trusted.
+The file is global only.
 
 ## Flags
 
-- `--fff-mode <mode>` — set mode (see above)
 - `--fff-frecency-db <path>` — path to frecency database (also: `FFF_FRECENCY_DB` env). Optional; see [Data](#data) for the default.
 - `--fff-history-db <path>` — path to query history database (also: `FFF_HISTORY_DB` env). Optional; see [Data](#data) for the default.
 - `--fff-enable-root-scan` — allow indexing when launched from `/` (also: `FFF_ENABLE_ROOT_SCAN=1` env). FFF refuses to init at the filesystem root by default.
@@ -181,6 +160,7 @@ The file is global only. Project-level config cannot safely control tool names b
 ## Data
 
 FFF uses two LMDB databases:
+
 - frecency database - file access frequency/recency, used to rank results
 - history database - query-to-file selection history
 

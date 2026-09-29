@@ -102,7 +102,7 @@ command = "/opt/homebrew/bin/fff-mcp"
 
 Use the actual installed path for your system, then restart Codex or start a new task so it loads the server.
 
-Once the server is connected, ask the agent to "use fff" and it picks up the `ffgrep`, `fffind`, and `fff-multi-grep` tools.
+Once the server is connected, ask the agent to "use fff" and it picks up the `find_files`, `grep`, and `multi_grep` tools.
 
 ### Recommended agent prompt
 
@@ -136,26 +136,17 @@ The MCP server gives any agent a file search tool that is faster and more token-
 pi install npm:@ff-labs/pi-fff
 ```
 
-### Modes
+The extension runs exclusively in override mode: it replaces pi's built-in `grep` and `find` with FFF implementations right after install.
 
-Three operating modes, switchable at runtime with `/fff-mode`:
-
-| Mode                     | What it does                                                                      |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| `tools-and-ui` (default) | Adds `ffgrep` and `fffind` tools, replaces `@`-mention autocomplete with FFF.     |
-| `tools-only`             | Only tool injection. Keeps pi's native editor autocomplete.                       |
-| `override`               | Replaces pi's built-in `grep`, `find`, and `multi_grep` with FFF implementations. |
-
-Env vars: `PI_FFF_MODE`, `FFF_FRECENCY_DB`, `FFF_HISTORY_DB`. Flags: `--fff-mode`, `--fff-frecency-db`, `--fff-history-db`. The databases default to your existing fff.nvim ones when present, otherwise `~/.pi/agent/fff/`.
+Env vars: `FFF_FRECENCY_DB`, `FFF_HISTORY_DB`. Flags: `--fff-frecency-db`, `--fff-history-db`. The databases default to your existing fff.nvim ones when present, otherwise `~/.pi/agent/fff/`.
 
 ### Agent-facing tools
 
-- `ffgrep`. Content search. Accepts `path`, `exclude` (comma, space, or array; leading `!` optional), `caseSensitive`, `context`, and cursor pagination. Auto-detects regex, falls back to fuzzy on zero exact matches, rejects `.*`-style wildcard-only patterns up front.
-- `fffind`. Path and filename search. Matches the whole repo-relative path, not just the filename. Frecency-aware. The weak-match detector flags scattered fuzzy noise before it floods the agent's context.
+- `grep`. Content search. Accepts `path`, `exclude` (comma, space, or array; leading `!` optional), `caseSensitive`, `context`, and cursor pagination. Auto-detects regex, falls back to fuzzy on zero exact matches, rejects `.*`-style wildcard-only patterns up front.
+- `find`. Path and filename search. Matches the whole repo-relative path, not just the filename. Frecency-aware. The weak-match detector flags scattered fuzzy noise before it floods the agent's context.
 
 ### Commands
 
-- `/fff-mode [tools-and-ui | tools-only | override]`. Show or switch the mode.
 - `/fff-health`. Picker, frecency, and git integration status.
 - `/fff-rescan`. Force a rescan.
 

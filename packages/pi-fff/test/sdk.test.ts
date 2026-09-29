@@ -22,7 +22,11 @@ describe("loadFirst", () => {
       a: () => Promise.resolve({ FileFinder: { create: () => "a" } }),
       b: () => Promise.resolve({ FileFinder: { create: () => "b" } }),
     };
-    const mod = await loadFirst(["a", "b"], loaders);
+    // loadFirst 的返回类型固定为 FileFinderStatic（create 需 InitOptions），
+    // 此处的 mock 用无参 create 验证「返回第一个候选」行为，断言收窄类型。
+    const mod = (await loadFirst(["a", "b"], loaders)) as unknown as {
+      FileFinder: { create: () => string };
+    };
     expect(mod.FileFinder.create()).toBe("a");
   });
 
@@ -31,7 +35,9 @@ describe("loadFirst", () => {
       a: () => Promise.reject(new Error("cannot find a")),
       b: () => Promise.resolve({ FileFinder: { create: () => "b" } }),
     };
-    const mod = await loadFirst(["a", "b"], loaders);
+    const mod = (await loadFirst(["a", "b"], loaders)) as unknown as {
+      FileFinder: { create: () => string };
+    };
     expect(mod.FileFinder.create()).toBe("b");
   });
 
