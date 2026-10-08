@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { FileFinderApi } from "@ff-labs/fff-node";
+import type { FileFinderApi } from "../vendor/fff-node/dist/index.js";
 import type { FilePickerFactory } from "./file-picker";
 import { HOME_DIR } from "./paths";
 

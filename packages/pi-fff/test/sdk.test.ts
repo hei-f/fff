@@ -3,16 +3,19 @@ import { describe, expect, test } from "bun:test";
 import { loadFirst, sdkCandidates } from "../src/sdk";
 
 describe("sdkCandidates", () => {
-  test("defaults to bun candidates under a Bun runtime", () => {
-    expect(sdkCandidates()).toEqual(["@ff-labs/fff-bun", "@ff-labs/fff-node"]);
+  test("defaults to vendored bun candidates under a Bun runtime", () => {
+    expect(sdkCandidates()).toEqual([
+      "../vendor/fff-bun/dist/index.js",
+      "../vendor/fff-node/dist/index.js",
+    ]);
   });
 });
 
 describe("literal SDK imports", () => {
   test("both SDK specifiers appear as literal dynamic imports for static graph scans", () => {
     const source = readFileSync(new URL("../src/sdk.ts", import.meta.url), "utf8");
-    expect(source).toContain('import("@ff-labs/fff-bun")');
-    expect(source).toContain('import("@ff-labs/fff-node")');
+    expect(source).toContain('import("../vendor/fff-bun/dist/index.js")');
+    expect(source).toContain('import("../vendor/fff-node/dist/index.js")');
   });
 });
 

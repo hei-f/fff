@@ -1,0 +1,241 @@
+name: fff-package-build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 矩阵编译腿：8 桌面目标（android-arm64 显式排除，pi 不面向 android/Termux，
+  # vendored 平台映射保留"不支持"错误路径，README 于步骤 14 注明）
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS：darwin-x64 / darwin-arm64（交叉链接依赖 .cargo/config.toml
+          # 的 macos rustflags -undefined dynamic_lookup）
+          - os: macos-latest
+            platform: darwin-x64
+            triple: x86_64-apple-darwin
+            lib_filename: libfff_c.dylib
+          - os: macos-latest
+            platform: darwin-arm64
+            triple: aarch64-apple-darwin
+            lib_filename: libfff_c.dylib
+          # Linux gnu（glibc 2.31 基线，zigbuild 后缀目标参照上游 release.yaml）
+          - os: ubuntu-latest
+            platform: linux-x64-gnu
+            triple: x86_64-unknown-linux-gnu
+            zigbuild_target: x86_64-unknown-linux-gnu.2.31
+            lib_filename: libfff_c.so
+          - os: ubuntu-latest
+            platform: linux-arm64-gnu
+            triple: aarch64-unknown-linux-gnu
+            zigbuild_target: aarch64-unknown-linux-gnu.2.31
+            lib_filename: libfff_c.so
+          # Linux musl（静态链接，config.toml 已关 crt-static）
+          - os: ubuntu-latest
+            platform: linux-x64-musl
+            triple: x86_64-unknown-linux-musl
+            lib_filename: libfff_c.so
+          - os: ubuntu-latest
+            platform: linux-arm64-musl
+            triple: aarch64-unknown-linux-musl
+            lib_filename: libfff_c.so
+          # Windows：msvc 原生构建，无 zig；库名为 fff_c.dll（无 lib 前缀）
+          - os: windows-latest
+            platform: win32-x64
+            triple: x86_64-pc-windows-msvc
+            lib_filename: fff_c.dll
+          - os: windows-latest
+            platform: win32-arm64
+            triple: aarch64-pc-windows-msvc
+            lib_filename: fff_c.dll
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.triple }}
+
+      - name: Install Zig
+        if: contains(matrix.os, 'ubuntu')
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Install cargo-zigbuild
+        if: contains(matrix.os, 'ubuntu')
+        run: cargo install cargo-zigbuild
+
+      - name: Build for macOS
+        if: contains(matrix.os, 'macos')
+        shell: bash
+        run: |
+          MACOSX_DEPLOYMENT_TARGET="13" cargo build --profile ci --target ${{ matrix.triple }} -p fff-c --no-default-features --features zlob
+
+      - name: Build for Linux
+        if: contains(matrix.os, 'ubuntu')
+        shell: bash
+        run: |
+          cargo zigbuild --profile ci --target "${{ matrix.zigbuild_target || matrix.target }}" -p fff-c --no-default-features --features zlob
+
+      - name: Build for Windows
+        if: contains(matrix.os, 'windows')
+        shell: bash
+        run: |
+          cargo build --profile ci --target ${{ matrix.triple }} -p fff-c --no-default-features --features zlob
+
+      - name: Stage library
+        shell: bash
+        run: |
+          mkdir -p "dist/${{ matrix.platform }}"
+          cp "target/${{ matrix.triple }}/ci/${{ matrix.lib_filename }}" "dist/${{ matrix.platform }}/${{ matrix.lib_filename }}"
+
+      - name: Ad-hoc sign macOS library
+        if: contains(matrix.os, 'macos')
+        run: codesign --force --sign - "dist/${{ matrix.platform }}/${{ matrix.lib_filename }}"
+
+      - name: Upload library
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-${{ matrix.platform }}
+          path: dist/${{ matrix.platform }}/
+          if-no-files-found: error
+
+  # 组装腿：重建 vendored dist + 8 平台库入位 + 打包门禁 + 发布门禁
+  assemble:
+    name: Assemble vendored package
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "25"
+
+      - uses: oven-sh/setup-bun@v2
+
+      # vendored fff-node 不在根 workspaces 列表，tsup/tsc 依赖经 pi-fff
+      # 祖先 node_modules 上溯解析，须先装根依赖并刷新 npm 格式锁文件
+      - name: Install workspace dependencies
+        working-directory: packages
+        run: |
+          bun install
+          npm install --package-lock-only --ignore-scripts
+
+      - name: Download native libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lib-*
+          path: ./libs
+          merge-multiple: true
+
+      - name: Rebuild vendored fff-bun dist
+        working-directory: packages/pi-fff/vendor/fff-bun
+        run: |
+          bun build ./src/index.ts --format=esm --target=bun --sourcemap=external --outdir dist
+          tsc -p tsconfig.build.json
+
+      - name: Rebuild vendored fff-node dist
+        working-directory: packages/pi-fff/vendor/fff-node
+        run: npm run build
+
+      - name: Copy libraries into vendor bin dirs
+        shell: bash
+        run: |
+          for platform in darwin-x64 darwin-arm64 linux-x64-gnu linux-arm64-gnu linux-x64-musl linux-arm64-musl win32-x64 win32-arm64; do
+            case "$platform" in
+              win32-*) LIB_NAME="fff_c.dll" ;;
+              darwin-*) LIB_NAME="libfff_c.dylib" ;;
+              *) LIB_NAME="libfff_c.so" ;;
+            esac
+            [ -f "libs/dist/$platform/$LIB_NAME" ] || { echo "FAIL: missing $platform/$LIB_NAME artifact"; exit 1; }
+            for pkg in fff-bun fff-node; do
+              DEST="packages/pi-fff/vendor/$pkg/bin/$platform"
+              mkdir -p "$DEST"
+              cp "libs/dist/$platform/$LIB_NAME" "$DEST/$LIB_NAME"
+            done
+          done
+          COUNT=$(find packages/pi-fff/vendor -path "*/bin/*" -type f | wc -l)
+          [ "$COUNT" -eq 16 ] || { echo "FAIL: expected 16 vendored libraries, found $COUNT"; exit 1; }
+          echo "OK: 8 platforms x 2 packages = 16 vendored libraries in place"
+
+      # tag 触发时同步 pi-fff 版本号，避免门禁通过却发布旧版本
+      - name: Sync version from tag
+        if: github.ref_type == 'tag'
+        working-directory: packages/pi-fff
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          node -e "const fs = require('node:fs'); const p = JSON.parse(fs.readFileSync('package.json', 'utf8')); p.version = process.argv[1]; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');" "$VERSION"
+
+      # 打包门禁：npm pack --dry-run 输出须含全部 vendored 库路径，缺任一即 fail
+      - name: Validate tarball contains all vendored libraries
+        working-directory: packages/pi-fff
+        shell: bash
+        run: |
+          node <<'EOF'
+          const { execFileSync } = require("node:child_process");
+          const out = execFileSync("npm", ["pack", "--dry-run", "--json"], { stdio: ["ignore", "pipe", "inherit"] });
+          const text = out.toString();
+          const start = text.indexOf("[");
+          const data = JSON.parse(text.slice(start));
+          const files = data[0].files.map((f) => f.path);
+          const platforms = ["darwin-x64", "darwin-arm64", "linux-x64-gnu", "linux-arm64-gnu", "linux-x64-musl", "linux-arm64-musl", "win32-x64", "win32-arm64"];
+          const expected = [];
+          for (const platform of platforms) {
+            let lib = "libfff_c.so";
+            if (platform.startsWith("win32")) lib = "fff_c.dll";
+            else if (platform.startsWith("darwin")) lib = "libfff_c.dylib";
+            for (const pkg of ["fff-bun", "fff-node"]) {
+              expected.push(`vendor/${pkg}/bin/${platform}/${lib}`);
+            }
+          }
+          const missing = expected.filter((p) => !files.includes(p));
+          if (missing.length) {
+            console.error("FAIL: tarball missing vendored libraries:\n" + missing.join("\n"));
+            process.exit(1);
+          }
+          console.log(`OK: tarball contains ${expected.length} vendored library entries (${platforms.length} platforms x 2 packages)`);
+          EOF
+
+      - name: Pack tarball
+        working-directory: packages/pi-fff
+        run: npm pack
+
+      # 发布门禁：未配置 NPM_TOKEN 或非 tag 触发（workflow_dispatch）→ 跳过发布，
+      # workflow 以打包校验成功结束并保留 tarball（不误发布、不误失败）
+      - name: Publish to npm
+        if: env.NPM_TOKEN != '' && github.ref_type == 'tag'
+        working-directory: packages/pi-fff
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Upload packed tarball
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-fff-tarball
+          path: packages/pi-fff/*.tgz
+          if-no-files-found: error

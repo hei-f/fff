@@ -1,4 +1,4 @@
-import type { FileFinderApi, InitOptions, Result } from "@ff-labs/fff-node";
+import type { FileFinderApi, InitOptions, Result } from "../vendor/fff-node/dist/index.js";
 import { type FileFinderStatic, loadSdk, SCAN_TIMEOUT_MS } from "./sdk";
 
 export interface PickerOptions {
