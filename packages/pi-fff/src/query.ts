@@ -1,5 +1,8 @@
 import path from "node:path";
 
+// glob 通配符检测，与 parser has_wildcards 同字符集（glob_detect.rs:16-18）
+export const GLOB_WILDCARDS_RE = /[*?[{]/;
+
 export function normalizePathConstraint(
   pathConstraint: string,
   cwd = process.cwd(),
@@ -37,13 +40,13 @@ export function normalizePathConstraint(
   const recursiveDir = trimmed.match(/^(.*)\/\*\*(?:\/\*)?$/);
   if (recursiveDir) {
     const dir = recursiveDir[1];
-    if (dir && !/[*?[{]/.test(dir)) return `${dir}/`;
+    if (dir && !GLOB_WILDCARDS_RE.test(dir)) return `${dir}/`;
   }
 
   // Already signals path-constraint syntax to the parser.
   if (trimmed.startsWith("/") || trimmed.endsWith("/")) return trimmed;
   // Globs (`*.ts`, `src/**/*.cc`, `{src,lib}`) are handled by the parser.
-  if (/[*?[{]/.test(trimmed)) return trimmed;
+  if (GLOB_WILDCARDS_RE.test(trimmed)) return trimmed;
   // Filename with extension (`main.rs`, `config.json`) → FilePath constraint.
   const lastSegment = trimmed.split("/").pop() ?? "";
   if (/\.[a-zA-Z][a-zA-Z0-9]{0,9}$/.test(lastSegment)) return trimmed;

@@ -3,6 +3,7 @@ import path from "node:path";
 import type { FileFinderApi } from "../vendor/fff-node/dist/index.js";
 import type { FilePickerFactory } from "./file-picker";
 import { HOME_DIR } from "./paths";
+import { GLOB_WILDCARDS_RE } from "./query";
 
 export const MAX_AUX = 3;
 export const IDLE_TTL_MS = 5 * 60 * 1000;
@@ -129,7 +130,7 @@ export function resolveAuxRoot(absPath: string): { root: string; suffix: string 
   if (trimmed === path.sep) return { root: path.sep, suffix: "" };
 
   const parts = trimmed.split(path.sep);
-  const firstGlob = parts.findIndex((p) => /[*?[{]/.test(p));
+  const firstGlob = parts.findIndex((p) => GLOB_WILDCARDS_RE.test(p));
   const boundary = firstGlob === -1 ? parts.length : firstGlob;
 
   // Deepest existing non-glob prefix wins; everything below it is suffix.

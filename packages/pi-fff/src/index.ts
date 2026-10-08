@@ -31,7 +31,7 @@ import { AuxFinderPool, routePathConstraint } from "./aux-finders";
 import { loadConfig } from "./config";
 import { FilePickerFactory } from "./file-picker";
 import { isFsRoot, isHomeDir, resolveDbPaths } from "./paths";
-import { buildQuery, normalizedExcludeSegments } from "./query";
+import { buildQuery, GLOB_WILDCARDS_RE, normalizedExcludeSegments } from "./query";
 
 export { SCAN_TIMEOUT_MS } from "./sdk";
 
@@ -1003,15 +1003,14 @@ export default function fffExtension(pi: ExtensionAPI) {
 
       let output = formatGrepOutput(result);
       const notices: string[] = [];
-      // 结果非空时探测段型排除项是否存在，段拼错的静默失效变为可见提示
-      if (result.items.length > 0) {
-        appendExcludeSegmentHints(
-          notices,
-          params.exclude,
-          picker,
-          aux?.root ?? activeCwd,
-        );
-      }
+      // 结果非空时探测段型排除项，拼错目录名的静默失效变为可见提示
+      appendExcludeSegmentHints(
+        notices,
+        params.exclude,
+        picker,
+        aux?.root ?? activeCwd,
+        result.items.length > 0,
+      );
       if (result.regexFallbackError) {
         notices.push(
           `Invalid regex: ${result.regexFallbackError}, used literal match`,
@@ -1148,15 +1147,14 @@ export default function fffExtension(pi: ExtensionAPI) {
         result.totalMatched > shownSoFar;
 
       const notices: string[] = [];
-      // 结果非空时探测段型排除项是否存在，段拼错的静默失效变为可见提示
-      if (result.items.length > 0) {
-        appendExcludeSegmentHints(
-          notices,
-          params.exclude,
-          picker,
-          aux?.root ?? activeCwd,
-        );
-      }
+      // 结果非空时探测段型排除项，拼错目录名的静默失效变为可见提示
+      appendExcludeSegmentHints(
+        notices,
+        params.exclude,
+        picker,
+        aux?.root ?? activeCwd,
+        result.items.length > 0,
+      );
       if (formatted.weak && formatted.shownCount > 0)
         notices.push(
           `Query "${pattern}" produced only weak scattered fuzzy matches. Output capped at ${formatted.shownCount}/${result.totalMatched}.`,
@@ -1264,9 +1262,8 @@ export default function fffExtension(pi: ExtensionAPI) {
 }
 
 // 检测查询串是否含 glob 通配符（* ? [ {），与 parser has_wildcards 同字符集
-// （crates/fff-query-parser/src/glob_detect.rs）。
 function hasGlobWildcards(pattern: string): boolean {
-  return /[*?[{]/.test(pattern);
+  return GLOB_WILDCARDS_RE.test(pattern);
 }
 
 // exclude 段存在性探测：段型排除项拼错（如 tests/ 而非 test/）会静默失效，
@@ -1276,7 +1273,9 @@ function appendExcludeSegmentHints(
   exclude: string | string[] | undefined,
   picker: FileFinderApi,
   cwd: string,
+  hasResults: boolean,
 ): void {
+  if (!hasResults) return;
   for (const segment of normalizedExcludeSegments(exclude, cwd)) {
     try {
       const probe = picker.fileSearch(segment, { pageSize: 1 });
