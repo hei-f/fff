@@ -91,7 +91,7 @@ jobs:
         if: contains(matrix.os, 'ubuntu')
         shell: bash
         run: |
-          cargo zigbuild --profile ci --target "${{ matrix.zigbuild_target || matrix.target }}" -p fff-c --no-default-features --features zlob
+          cargo zigbuild --profile ci --target "${{ matrix.zigbuild_target || matrix.triple }}" -p fff-c --no-default-features --features zlob
 
       - name: Build for Windows
         if: contains(matrix.os, 'windows')
