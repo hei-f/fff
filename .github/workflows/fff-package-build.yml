@@ -148,7 +148,6 @@ jobs:
         with:
           pattern: lib-*
           path: ./libs
-          merge-multiple: true
 
       - name: Rebuild vendored fff-bun dist
         working-directory: packages/pi-fff/vendor/fff-bun
@@ -169,11 +168,11 @@ jobs:
               darwin-*) LIB_NAME="libfff_c.dylib" ;;
               *) LIB_NAME="libfff_c.so" ;;
             esac
-            [ -f "libs/dist/$platform/$LIB_NAME" ] || { echo "FAIL: missing $platform/$LIB_NAME artifact"; exit 1; }
+            [ -f "libs/lib-$platform/$LIB_NAME" ] || { echo "FAIL: missing $platform/$LIB_NAME artifact"; exit 1; }
             for pkg in fff-bun fff-node; do
               DEST="packages/pi-fff/vendor/$pkg/bin/$platform"
               mkdir -p "$DEST"
-              cp "libs/dist/$platform/$LIB_NAME" "$DEST/$LIB_NAME"
+              cp "libs/lib-$platform/$LIB_NAME" "$DEST/$LIB_NAME"
             done
           done
           COUNT=$(find packages/pi-fff/vendor -path "*/bin/*" -type f | wc -l)
@@ -181,11 +180,14 @@ jobs:
           echo "OK: 8 platforms x 2 packages = 16 vendored libraries in place"
 
       # tag 触发时同步 pi-fff 版本号，避免门禁通过却发布旧版本
+      # tag 名经 job env 传递，不经 shell 插值（防注入）
       - name: Sync version from tag
         if: github.ref_type == 'tag'
+        env:
+          REF_NAME: ${{ github.ref_name }}
         working-directory: packages/pi-fff
         run: |
-          VERSION="${{ github.ref_name }}"
+          VERSION="$REF_NAME"
           VERSION="${VERSION#v}"
           node -e "const fs = require('node:fs'); const p = JSON.parse(fs.readFileSync('package.json', 'utf8')); p.version = process.argv[1]; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');" "$VERSION"
 

@@ -1270,8 +1270,7 @@ function hasGlobWildcards(pattern: string): boolean {
 }
 
 // exclude 段存在性探测：段型排除项拼错（如 tests/ 而非 test/）会静默失效，
-// 对每个段做最小查询（pageSize 1），0 命中即在 notices 追加提示；探测失败
-// 静默跳过，不影响工具结果。段 token 嵌入查询串（SearchOptions 无 path 字段）。
+// 对每个段做最小查询（pageSize 1），0 命中即在 notices 追加提示并静默跳过失败。
 function appendExcludeSegmentHints(
   notices: string[],
   exclude: string | string[] | undefined,
