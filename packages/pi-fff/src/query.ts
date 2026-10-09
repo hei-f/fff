@@ -1,5 +1,8 @@
 import path from "node:path";
 
+// glob 通配符检测，与 parser has_wildcards 同字符集（glob_detect.rs:16-18）
+export const GLOB_WILDCARDS_RE = /[*?[{]/;
+
 export function normalizePathConstraint(
   pathConstraint: string,
   cwd = process.cwd(),
@@ -10,7 +13,11 @@ export function normalizePathConstraint(
   if (path.isAbsolute(trimmed)) {
     const relative = path.relative(cwd, trimmed).replaceAll(path.sep, "/");
     if (relative === "") return null;
-    if (relative.startsWith("../") || relative === ".." || path.isAbsolute(relative)) {
+    if (
+      relative.startsWith("../") ||
+      relative === ".." ||
+      path.isAbsolute(relative)
+    ) {
       throw new Error(
         `Path constraint must be relative to the workspace: ${pathConstraint}`,
       );
@@ -33,13 +40,13 @@ export function normalizePathConstraint(
   const recursiveDir = trimmed.match(/^(.*)\/\*\*(?:\/\*)?$/);
   if (recursiveDir) {
     const dir = recursiveDir[1];
-    if (dir && !/[*?[{]/.test(dir)) return `${dir}/`;
+    if (dir && !GLOB_WILDCARDS_RE.test(dir)) return `${dir}/`;
   }
 
   // Already signals path-constraint syntax to the parser.
   if (trimmed.startsWith("/") || trimmed.endsWith("/")) return trimmed;
   // Globs (`*.ts`, `src/**/*.cc`, `{src,lib}`) are handled by the parser.
-  if (/[*?[{]/.test(trimmed)) return trimmed;
+  if (GLOB_WILDCARDS_RE.test(trimmed)) return trimmed;
   // Filename with extension (`main.rs`, `config.json`) → FilePath constraint.
   const lastSegment = trimmed.split("/").pop() ?? "";
   if (/\.[a-zA-Z][a-zA-Z0-9]{0,9}$/.test(lastSegment)) return trimmed;
@@ -71,6 +78,30 @@ export function normalizeExcludes(
     }
   }
   return out;
+}
+
+// 段型排除列表：归一化为目录前缀（以 / 结尾）的项，保留尾部 /，仅用于排除项
+// 存在性探测；过滤退化段（归一化为 / 或空的项，parser 对单独 / 不产生约束）。
+export function normalizedExcludeSegments(
+  exclude: string | string[] | undefined,
+  cwd = process.cwd(),
+): string[] {
+  if (!exclude) return [];
+  const list = Array.isArray(exclude) ? exclude : [exclude];
+  const segments = new Set<string>();
+  for (const raw of list) {
+    const parts = raw
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const p of parts) {
+      const stripped = p.startsWith("!") ? p.slice(1) : p;
+      const normalized = normalizePathConstraint(stripped, cwd);
+      if (!normalized || normalized === "/") continue;
+      if (normalized.endsWith("/")) segments.add(normalized);
+    }
+  }
+  return [...segments];
 }
 
 export function buildQuery(

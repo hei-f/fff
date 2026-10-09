@@ -1,7 +1,7 @@
 {
-  "name": "@ff-labs/pi-fff",
+  "name": "@hf-pi/fff",
   "public": true,
-  "version": "0.6.0",
+  "version": "0.0.1",
   "description": "pi extension: FFF-powered fuzzy file and content search",
   "type": "module",
   "license": "MIT",
@@ -31,7 +31,8 @@
   },
   "files": [
     "src",
-    "pi-fff.schema.json"
+    "pi-fff.schema.json",
+    "vendor"
   ],
   "publishConfig": {
     "access": "public"
@@ -41,8 +42,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ff-labs/fff-bun": "*",
-    "@ff-labs/fff-node": "*"
+    "ffi-rs": "^1.0.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

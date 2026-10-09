@@ -133,7 +133,7 @@ The MCP server gives any agent a file search tool that is faster and more token-
 ### Install
 
 ```bash
-pi install npm:@ff-labs/pi-fff
+pi install npm:@hf-pi/fff
 ```
 
 The extension runs exclusively in override mode: it replaces pi's built-in `grep` and `find` with FFF implementations right after install.
@@ -142,8 +142,8 @@ Env vars: `FFF_FRECENCY_DB`, `FFF_HISTORY_DB`. Flags: `--fff-frecency-db`, `--ff
 
 ### Agent-facing tools
 
-- `grep`. Content search. Accepts `path`, `exclude` (comma, space, or array; leading `!` optional), `caseSensitive`, `context`, and cursor pagination. Auto-detects regex, falls back to fuzzy on zero exact matches, rejects `.*`-style wildcard-only patterns up front.
-- `find`. Path and filename search. Matches the whole repo-relative path, not just the filename. Frecency-aware. The weak-match detector flags scattered fuzzy noise before it floods the agent's context.
+- `grep`. Content search. Accepts `path`, `exclude` (comma, space, or array; leading `!` optional), `caseSensitive`, `context`, and cursor pagination. Auto-detects regex, falls back to fuzzy on zero exact matches unless `caseSensitive: true` is set (strict mode returns empty), rejects `.*`-style wildcard-only patterns up front. Misspelled directory exclusions surface a hint instead of failing silently.
+- `find`. Path and filename search. Matches the whole repo-relative path, not just the filename. Frecency-aware. Glob-constrained queries return full results; the weak-match detector flags scattered fuzzy noise only in pure fuzzy queries. Cursor pagination resumes from absolute offsets.
 
 ### Commands
 
@@ -928,7 +928,7 @@ If you are running one grep from a terminal, `rg` is still the right tool. If yo
 - `crates/fff-mcp` - MCP server binary.
 - `packages/fff-node` - Node.js SDK (`@ff-labs/fff-node`).
 - `packages/fff-bun` - Bun SDK (`@ff-labs/fff-bun`).
-- `packages/pi-fff` - pi extension (`@ff-labs/pi-fff`).
+- `packages/pi-fff` - pi extension (`@hf-pi/fff`).
 - `lua/` - Neovim-side plugin code.
 
 ## Contributing

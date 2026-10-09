@@ -1,4 +1,4 @@
-import type { FileFinderApi, InitOptions, Result } from "@ff-labs/fff-node";
+import type { FileFinderApi, InitOptions, Result } from "../vendor/fff-node/dist/index.js";
 
 export const SCAN_TIMEOUT_MS = 15_000;
 
@@ -10,19 +10,18 @@ export type FileFinderStatic = {
 let sdkPromise: Promise<{ FileFinder: FileFinderStatic }> | null = null;
 
 const SDK_ORDER: Record<"bun" | "node", readonly [string, string]> = {
-  // fff-bun is TS-source only and cannot be imported by Bun-compiled hosts
-  // (e.g. omp) whose module resolver rejects .ts under node_modules, so the
-  // JS-compiled fff-node is kept as a fallback for every runtime.
-  bun: ["@ff-labs/fff-bun", "@ff-labs/fff-node"],
-  node: ["@ff-labs/fff-node", "@ff-labs/fff-bun"],
+  // fff-bun is Bun-targeted but its dist/index.js is importable by Bun hosts;
+  // the JS-compiled fff-node is kept as a fallback for every runtime.
+  bun: ["../vendor/fff-bun/dist/index.js", "../vendor/fff-node/dist/index.js"],
+  node: ["../vendor/fff-node/dist/index.js", "../vendor/fff-bun/dist/index.js"],
 };
 
 // Literal dynamic imports so hosts that statically scan extension graphs
 // (omp's legacy-pi-compat loader) discover and hook both SDK packages;
 // a variable `import(pkg)` would bypass that scan and fail at runtime.
 const SDK_IMPORTS = {
-  "@ff-labs/fff-bun": () => import("@ff-labs/fff-bun"),
-  "@ff-labs/fff-node": () => import("@ff-labs/fff-node"),
+  "../vendor/fff-bun/dist/index.js": () => import("../vendor/fff-bun/dist/index.js"),
+  "../vendor/fff-node/dist/index.js": () => import("../vendor/fff-node/dist/index.js"),
 } as const;
 
 function detectRuntime(): "bun" | "node" {

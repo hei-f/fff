@@ -25,13 +25,13 @@ import type {
   GrepResult,
   MixedItem,
   SearchResult,
-} from "@ff-labs/fff-node";
+} from "../vendor/fff-node/dist/index.js";
 import { Type } from "@sinclair/typebox";
 import { AuxFinderPool, routePathConstraint } from "./aux-finders";
 import { loadConfig } from "./config";
 import { FilePickerFactory } from "./file-picker";
 import { isFsRoot, isHomeDir, resolveDbPaths } from "./paths";
-import { buildQuery } from "./query";
+import { buildQuery, GLOB_WILDCARDS_RE, normalizedExcludeSegments } from "./query";
 
 export { SCAN_TIMEOUT_MS } from "./sdk";
 
@@ -83,14 +83,13 @@ function getCursor(id: string): GrepCursor | undefined {
   return cursorCache.get(id);
 }
 
-// Find pagination uses a page-index cursor: native `fileSearch` takes
-// pageIndex/pageSize, so the cursor is just the next page index paired with
-// the query+limit that produced it. Stored tokens are opaque IDs to the agent.
+// find 翻页使用绝对偏移 cursor：原生 fileSearch 将 pageIndex 视为 skip 偏移，
+// 记录下一页的绝对偏移与产生它的 query+limit；存储 token 对 agent 不透明。
 interface FindCursor {
   query: string;
   pattern: string;
   pageSize: number;
-  nextPageIndex: number;
+  nextOffset: number;
   auxRoot?: string;
 }
 
@@ -189,11 +188,8 @@ function formatGrepOutput(result: GrepResult): string {
   return lines.join("\n");
 }
 
-// Weak-match threshold is derived from the query length, matching the
-// scoring formula in crates/fff-core/src/score.rs: a perfect match scores
-// `len * 16`, so we treat anything below 50% of that as scattered fuzzy noise.
-// When the top score is weak, trim output to a small sample instead of dumping
-// the full limit worth of noise into the agent's context.
+// 弱匹配阈值按查询长度缩放（对照 crates/fff-core/src/score.rs 计分公式）：
+// 阈值为 len*12 的 50%，低于即视为散落的模糊噪声，输出截断为小样本。
 const FIND_WEAK_SAMPLE_SIZE = 5;
 
 function weakScoreThreshold(pattern: string): number {
@@ -226,7 +222,9 @@ function formatFindOutput(
   // Peek at the top native score to decide whether results are scattered
   // fuzzy noise (query length-scaled threshold from score.rs).
   const topScore = result.scores[0]?.total ?? 0;
-  const weak = topScore < weakScoreThreshold(pattern);
+  // glob 约束型查询跳过 weak 降噪：约束查询的弱分数是命中信号而非模糊噪声
+  const weak =
+    topScore < weakScoreThreshold(pattern) && !hasGlobWildcards(pattern);
   const effective = weak ? Math.min(FIND_WEAK_SAMPLE_SIZE, limit) : limit;
   const shown = reordered.slice(0, effective);
 
@@ -973,7 +971,9 @@ export default function fffExtension(pi: ExtensionAPI) {
         result.items.length === 0 &&
         !result.nextCursor &&
         !params.cursor &&
-        mode !== "regex"
+        mode !== "regex" &&
+        // caseSensitive=true 为严格语义：0 精确命中直接返回，不启动 fuzzy 降级
+        params.caseSensitive !== true
       ) {
         // When the caller pinned a specific file (path has an extension), the
         // fuzzy fallback broadens across the whole picker — the file may just
@@ -1003,6 +1003,14 @@ export default function fffExtension(pi: ExtensionAPI) {
 
       let output = formatGrepOutput(result);
       const notices: string[] = [];
+      // 结果非空时探测段型排除项，拼错目录名的静默失效变为可见提示
+      appendExcludeSegmentHints(
+        notices,
+        params.exclude,
+        picker,
+        aux?.root ?? activeCwd,
+        result.items.length > 0,
+      );
       if (result.regexFallbackError) {
         notices.push(
           `Invalid regex: ${result.regexFallbackError}, used literal match`,
@@ -1115,11 +1123,13 @@ export default function fffExtension(pi: ExtensionAPI) {
           : buildQuery(params.path, params.pattern, params.exclude, activeCwd);
 
       const pattern = resumed ? resumed.pattern : params.pattern;
-      const pageIndex = resumed?.nextPageIndex ?? 0;
+      // 绝对偏移翻页：原生 page_index 即 skip 偏移（score.rs skip(offset).take(limit)），
+      // 续页时以累计偏移续查，避免页码口径错配导致结果重叠。
+      const offset = resumed?.nextOffset ?? 0;
       const auxRoot = resumed?.auxRoot ?? aux?.root;
 
       const searchResult = picker.fileSearch(query, {
-        pageIndex,
+        pageIndex: offset,
         pageSize: effectiveLimit,
       });
       if (!searchResult.ok) throw new Error(searchResult.error);
@@ -1131,12 +1141,20 @@ export default function fffExtension(pi: ExtensionAPI) {
       // Infer hasMore: native fileSearch fills pageSize when more results
       // exist, so if we got a full page AND totalMatched exceeds what we've
       // shown so far there's another page to fetch.
-      const shownSoFar = pageIndex * effectiveLimit + result.items.length;
+      const shownSoFar = offset + result.items.length;
       const hasMore =
         result.items.length >= effectiveLimit &&
         result.totalMatched > shownSoFar;
 
       const notices: string[] = [];
+      // 结果非空时探测段型排除项，拼错目录名的静默失效变为可见提示
+      appendExcludeSegmentHints(
+        notices,
+        params.exclude,
+        picker,
+        aux?.root ?? activeCwd,
+        result.items.length > 0,
+      );
       if (formatted.weak && formatted.shownCount > 0)
         notices.push(
           `Query "${pattern}" produced only weak scattered fuzzy matches. Output capped at ${formatted.shownCount}/${result.totalMatched}.`,
@@ -1148,7 +1166,8 @@ export default function fffExtension(pi: ExtensionAPI) {
           query,
           pattern,
           pageSize: effectiveLimit,
-          nextPageIndex: pageIndex + 1,
+          // 当次 offset + 本页条数 = 下一页的绝对偏移
+          nextOffset: offset + result.items.length,
           auxRoot,
         });
         notices.push(
@@ -1162,7 +1181,8 @@ export default function fffExtension(pi: ExtensionAPI) {
         details: {
           totalMatched: result.totalMatched,
           totalFiles: result.totalFiles,
-          pageIndex,
+          // 本页起始的绝对偏移（原"页码"表述在新 offset 契约下不准确）
+          pageIndex: offset,
           hasMore,
         },
       };
@@ -1239,4 +1259,33 @@ export default function fffExtension(pi: ExtensionAPI) {
       ctx.ui.notify("FFF rescan triggered", "info");
     },
   });
+}
+
+// 检测查询串是否含 glob 通配符（* ? [ {），与 parser has_wildcards 同字符集
+function hasGlobWildcards(pattern: string): boolean {
+  return GLOB_WILDCARDS_RE.test(pattern);
+}
+
+// exclude 段存在性探测：段型排除项拼错（如 tests/ 而非 test/）会静默失效，
+// 对每个段做最小查询（pageSize 1），0 命中即在 notices 追加提示并静默跳过失败。
+function appendExcludeSegmentHints(
+  notices: string[],
+  exclude: string | string[] | undefined,
+  picker: FileFinderApi,
+  cwd: string,
+  hasResults: boolean,
+): void {
+  if (!hasResults) return;
+  for (const segment of normalizedExcludeSegments(exclude, cwd)) {
+    try {
+      const probe = picker.fileSearch(segment, { pageSize: 1 });
+      if (probe.ok && probe.value.items.length === 0) {
+        notices.push(
+          `exclude '${segment}' did not exclude any paths — it looks like the directory is misspelled or not in the index`,
+        );
+      }
+    } catch {
+      // 探测失败静默跳过
+    }
+  }
 }

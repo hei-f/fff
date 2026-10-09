@@ -115,8 +115,8 @@ const finderModule = {
   },
 };
 
-mock.module("@ff-labs/fff-node", () => finderModule);
-mock.module("@ff-labs/fff-bun", () => finderModule);
+mock.module("../vendor/fff-node/dist/index.js", () => finderModule);
+mock.module("../vendor/fff-bun/dist/index.js", () => finderModule);
 
 mock.module("@earendil-works/pi-tui", () => ({
   MouseRegion: class MouseRegion {
@@ -1076,12 +1076,23 @@ describe("grep/find edge branches", () => {
     await shutdown(setup);
   });
 
-  // find：用游标续页走 resumed 路径
+  // find：用游标续页走 resumed 路径；伪造层按原生 skip 偏移语义切片，
+  // 断言续页携带的 pageIndex 为累计绝对偏移（新契约），避免页码口径错配重叠。
   test("find resumes pagination via a stored cursor", async () => {
-    let captured: unknown;
+    const pool = Array.from({ length: 50 }, (_, i) => ({
+      relativePath: `src/f${i}.ts`,
+      size: 1,
+      modified: 1,
+      accessFrecencyScore: 0,
+      modificationFrecencyScore: 0,
+      totalFrecencyScore: 100,
+      gitStatus: "clean",
+    }));
+    const calls: unknown[] = [];
     fileSearchImpl = (_query, options) => {
-      captured = options;
-      const items = fullPageFiles();
+      calls.push(options);
+      const opts = (options ?? {}) as { pageIndex?: number; pageSize?: number };
+      const items = pool.slice(opts.pageIndex ?? 0, (opts.pageIndex ?? 0) + (opts.pageSize ?? 30));
       return {
         ok: true,
         value: {
@@ -1108,7 +1119,267 @@ describe("grep/find edge branches", () => {
       abortOptions().signal,
     );
 
-    expect(captured).toEqual({ pageIndex: 1, pageSize: 30 });
+    // 首查 offset 0；续页以累计偏移 30（首页 30 条）续查，pageSize 沿用游标存储值
+    expect(calls).toEqual([
+      { pageIndex: 0, pageSize: 30 },
+      { pageIndex: 30, pageSize: 30 },
+    ]);
+    await shutdown(setup);
+  });
+
+  // find：glob 约束型查询跳过 weak 降噪——低分命中样本不被 cap 到 5 条、
+  // limit 全量生效，满页时照常给出翻页 cursor（原行为：弱匹配被截断且不可翻页）
+  test("find skips the weak cap for pure glob queries", async () => {
+    fileSearchImpl = () => {
+      const items = fullPageFiles();
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 1 })),
+          totalMatched: 50,
+          totalFiles: 1,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "*.rs", limit: 30 },
+      abortOptions().signal,
+    );
+
+    // 30 条全量展示（未被 weak cap 到 5 条）、无弱匹配通知、有翻页游标
+    expect(result.content[0].text).toContain("src/f29.ts");
+    expect(result.content[0].text).not.toContain("weak scattered fuzzy");
+    expect(result.content[0].text).not.toContain("capped at");
+    expect(result.content[0].text).toContain("20 more matches available");
+    await shutdown(setup);
+  });
+
+  // hasGlobWildcards 通配边界：? / [ / { 与 * 一样阻止 weak 降噪
+  test("find treats ? [ and { as glob wildcards in the weak guard", async () => {
+    fileSearchImpl = () => {
+      const items = fullPageFiles();
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 1 })),
+          totalMatched: 50,
+          totalFiles: 1,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    for (const pattern of ["a?c", "[ab].ts", "{src,lib}/**"]) {
+      const result = await tool.execute(
+        `call-${pattern}`,
+        { pattern, limit: 30 },
+        abortOptions().signal,
+      );
+      expect(result.content[0].text).not.toContain("weak scattered fuzzy");
+    }
+    await shutdown(setup);
+  });
+
+  // find：exclude 段型排除项探测——段不存在（拼错）时 0 命中 → 输出提示，
+  // 静默失效变为可见；! 前缀剥除后与普通段归一化一致，单一段只探测一次
+  test("find hints when an exclude segment is misspelled", async () => {
+    fileSearchImpl = (query, options) => {
+      const probe = (options as { pageSize?: number }).pageSize === 1;
+      if (probe) {
+        // 段不存在：探测 0 命中
+        return {
+          ok: true,
+          value: { items: [], scores: [], totalMatched: 0, totalFiles: 0 },
+        };
+      }
+      const items = fullPageFiles();
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 100 })),
+          totalMatched: 50,
+          totalFiles: 1,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "config", exclude: "!tests/", limit: 30 },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).toContain(
+      "exclude 'tests/' did not exclude any paths",
+    );
+    const probes = finders[0].fileSearch.mock.calls.filter(
+      ([, options]) => (options as { pageSize?: number }).pageSize === 1,
+    );
+    expect(probes.map(([query]) => query)).toEqual(["tests/"]);
+    await shutdown(setup);
+  });
+
+  // find：反向用例——段真实存在时探测命中，不提示（防误伤）；
+  // 逗号分隔的 glob（*.min.js）非段型不参与探测
+  test("find does not hint when the exclude segment exists", async () => {
+    fileSearchImpl = (query, options) => {
+      const probe = (options as { pageSize?: number }).pageSize === 1;
+      if (probe) {
+        // 段存在：探测命中 1 条
+        return {
+          ok: true,
+          value: {
+            items: [
+              {
+                relativePath: "test/a.ts",
+                size: 1,
+                modified: 1,
+                accessFrecencyScore: 0,
+                modificationFrecencyScore: 0,
+                totalFrecencyScore: 0,
+                gitStatus: "clean",
+              },
+            ],
+            scores: [{ total: 100 }],
+            totalMatched: 1,
+            totalFiles: 1,
+          },
+        };
+      }
+      const items = fullPageFiles();
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 100 })),
+          totalMatched: 50,
+          totalFiles: 1,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "config", exclude: "test/,*.min.js", limit: 30 },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).not.toContain("did not exclude any paths");
+    // 仅段型 test/ 参与探测，glob *.min.js 被过滤
+    const probes = finders[0].fileSearch.mock.calls.filter(
+      ([, options]) => (options as { pageSize?: number }).pageSize === 1,
+    );
+    expect(probes.map(([query]) => query)).toEqual(["test/"]);
+    await shutdown(setup);
+  });
+
+  // 探测失败静默跳过：抛错或 ok:false 都不影响工具结果、不追加提示
+  test("find ignores exclude probes that error or report failure", async () => {
+    fileSearchImpl = (query, options) => {
+      const probe = (options as { pageSize?: number }).pageSize === 1;
+      if (probe) {
+        if (query === "broken/") throw new Error("probe boom");
+        return { ok: false, error: "probe lock" };
+      }
+      const items = fullPageFiles();
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 100 })),
+          totalMatched: 50,
+          totalFiles: 1,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const thrown = await tool.execute(
+      "call-1",
+      { pattern: "config", exclude: "broken/" },
+      abortOptions().signal,
+    );
+    expect(thrown.content[0].text).not.toContain("did not exclude any paths");
+
+    const failed = await tool.execute(
+      "call-2",
+      { pattern: "config", exclude: "locked/" },
+      abortOptions().signal,
+    );
+    expect(failed.content[0].text).not.toContain("did not exclude any paths");
+    await shutdown(setup);
+  });
+
+  // 退化段（归一化为空）不发起探测，主查询仍正常返回
+  test("find skips probing for degenerate excludes", async () => {
+    fileSearchImpl = () => {
+      const items = fullPageFiles();
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 100 })),
+          totalMatched: 50,
+          totalFiles: 1,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "config", exclude: "./" },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).not.toContain("did not exclude any paths");
+    const probes = finders[0].fileSearch.mock.calls.filter(
+      ([, options]) => (options as { pageSize?: number }).pageSize === 1,
+    );
+    expect(probes).toHaveLength(0);
+    await shutdown(setup);
+  });
+
+  // find：0 命中时不探测排除项，直接给空结果说明
+  test("find returns an empty result without probing excludes", async () => {
+    fileSearchImpl = () => ({
+      ok: true,
+      value: { items: [], scores: [], totalMatched: 0, totalFiles: 0 },
+    });
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "config", exclude: "tests/" },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).toBe("No files found matching pattern");
+    expect(result.details).toEqual({
+      totalMatched: 0,
+      totalFiles: 0,
+      pageIndex: 0,
+      hasMore: false,
+    });
+    const probes = finders[0].fileSearch.mock.calls.filter(
+      ([, options]) => (options as { pageSize?: number }).pageSize === 1,
+    );
+    expect(probes).toHaveLength(0);
     await shutdown(setup);
   });
 
@@ -1181,6 +1452,127 @@ describe("grep/find edge branches", () => {
       abortOptions().signal,
     );
     expect(createCalls).toHaveLength(2);
+    await shutdown(setup);
+  });
+
+  // grep：exclude 段探测同样生效；数组形式逐段探测，段拼错（tests/）提示、
+  // 段存在（source/）不提示
+  test("grep hints for misspelled exclude segments only", async () => {
+    grepImpl = () => ({
+      ok: true,
+      value: {
+        items: [
+          {
+            relativePath: "src/a.ts",
+            lineNumber: 1,
+            col: 1,
+            lineContent: "hello",
+            contextBefore: [],
+            contextAfter: [],
+          },
+        ],
+        totalMatched: 5,
+        totalFiles: 1,
+        totalFilesSearched: 1,
+        filteredFileCount: 0,
+        nextCursor: null,
+      },
+    });
+    fileSearchImpl = (query, options) => {
+      // grep 只经 fileSearch 做段探测，非 pageSize 1 的调用即环境异常
+      expect((options as { pageSize?: number }).pageSize).toBe(1);
+      const hit = query === "source/";
+      return {
+        ok: true,
+        value: {
+          items: hit
+            ? [
+                {
+                  relativePath: "source/a.ts",
+                  size: 1,
+                  modified: 1,
+                  accessFrecencyScore: 0,
+                  modificationFrecencyScore: 0,
+                  totalFrecencyScore: 0,
+                  gitStatus: "clean",
+                },
+              ]
+            : [],
+          scores: hit ? [{ total: 100 }] : [],
+          totalMatched: hit ? 1 : 0,
+          totalFiles: hit ? 1 : 0,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "grep");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "TODO", exclude: ["tests/", "source/"] },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).toContain(
+      "exclude 'tests/' did not exclude any paths",
+    );
+    expect(result.content[0].text).not.toContain(
+      "exclude 'source/' did not exclude",
+    );
+    await shutdown(setup);
+  });
+
+  // grep：反向用例——段存在时探测命中，不提示（防误伤）
+  test("grep does not hint when the exclude segment exists", async () => {
+    grepImpl = () => ({
+      ok: true,
+      value: {
+        items: [
+          {
+            relativePath: "src/a.ts",
+            lineNumber: 1,
+            col: 1,
+            lineContent: "hello",
+            contextBefore: [],
+            contextAfter: [],
+          },
+        ],
+        totalMatched: 1,
+        totalFiles: 1,
+        totalFilesSearched: 1,
+        filteredFileCount: 0,
+        nextCursor: null,
+      },
+    });
+    fileSearchImpl = () => ({
+      ok: true,
+      value: {
+        items: [
+          {
+            relativePath: "test/a.ts",
+            size: 1,
+            modified: 1,
+            accessFrecencyScore: 0,
+            modificationFrecencyScore: 0,
+            totalFrecencyScore: 0,
+            gitStatus: "clean",
+          },
+        ],
+        scores: [{ total: 100 }],
+        totalMatched: 1,
+        totalFiles: 1,
+      },
+    });
+
+    const setup = await start();
+    const tool = toolWithName(setup, "grep");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "TODO", exclude: "test/" },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).not.toContain("did not exclude any paths");
     await shutdown(setup);
   });
 });
@@ -1279,6 +1671,43 @@ describe("init failure and fuzzy fallback paths", () => {
       "0 exact matches. Maybe you meant this?",
     );
     expect(calls).toBe(2);
+    await shutdown(setup);
+  });
+
+  // caseSensitive=true 为严格语义：0 精确命中直接返回，不启动 fuzzy 降级、
+  // 不输出模糊建议提示（守卫分支）。
+  test("grep keeps a strict caseSensitive miss empty without fuzzy fallback", async () => {
+    let calls = 0;
+    let captured: unknown;
+    grepImpl = (_query, options) => {
+      calls++;
+      captured = options;
+      return {
+        ok: true,
+        value: {
+          items: [],
+          totalMatched: 0,
+          totalFiles: 0,
+          totalFilesSearched: 0,
+          filteredFileCount: 0,
+          nextCursor: null,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "grep");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "TODO", caseSensitive: true },
+      abortOptions().signal,
+    );
+
+    // 严格模式传导 smartCase=false，且只发一次查询（无 fuzzy 二次调用）
+    expect((captured as { smartCase?: boolean }).smartCase).toBe(false);
+    expect(calls).toBe(1);
+    expect(result.content[0].text).toBe("No matches found");
+    expect(result.content[0].text).not.toContain("Maybe you meant this?");
     await shutdown(setup);
   });
 });

@@ -64,3 +64,17 @@ htmlcov/
 *.swo
 *~
 packages/pi-fff/tsconfig.tsbuildinfo
+
+# Vendored self-contained fff runtime (dist + native binaries)
+!packages/pi-fff/vendor/
+!packages/pi-fff/vendor/fff-bun/
+!packages/pi-fff/vendor/fff-node/
+!packages/pi-fff/vendor/fff-bun/dist/
+!packages/pi-fff/vendor/fff-node/dist/
+!packages/pi-fff/vendor/fff-bun/bin/
+!packages/pi-fff/vendor/fff-node/bin/
+!packages/pi-fff/vendor/fff-bun/bin/**
+!packages/pi-fff/vendor/fff-node/bin/**
+
+# Coverage artifacts (not committed)
+packages/pi-fff/coverage/

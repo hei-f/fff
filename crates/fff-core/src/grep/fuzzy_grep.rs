@@ -55,6 +55,12 @@ pub(super) fn fuzzy_grep_search<'a>(
         &neo_frizbee::Config {
             // Use the real max_typos so frizbee's SIMD prefilter actually rejects non-matching lines (~2 SIMD instructions per line vs full SW scoring).
             max_typos: Some(max_typos as u16),
+            // Strict (case_insensitive=false) requires byte-exact case; insensitive folds both cases.
+            casing: if case_insensitive {
+                neo_frizbee::CaseMatching::Ignore
+            } else {
+                neo_frizbee::CaseMatching::Respect
+            },
             sort: neo_frizbee::SortStrategy::Unsorted,
             scoring,
             ..Default::default()
@@ -82,8 +88,17 @@ pub(super) fn fuzzy_grep_search<'a>(
     let needle_bytes = grep_text.as_bytes();
     let mut unique_needle_chars: Vec<u8> = Vec::new();
     for &b in needle_bytes {
-        let lo = b.to_ascii_lowercase();
-        let hi = b.to_ascii_uppercase();
+        // Strict: needle bytes must appear byte-exact; insensitive: both cases count.
+        let lo = if case_insensitive {
+            b.to_ascii_lowercase()
+        } else {
+            b
+        };
+        let hi = if case_insensitive {
+            b.to_ascii_uppercase()
+        } else {
+            b
+        };
         if !unique_needle_chars.contains(&lo) {
             unique_needle_chars.push(lo);
         }
@@ -94,10 +109,16 @@ pub(super) fn fuzzy_grep_search<'a>(
 
     // How many distinct needle chars must appear in the file.
     // With max_typos allowed, we need at least (unique_count - max_typos)
+    // Strict mode counts original bytes; insensitive mode folds case variants.
     let unique_count = {
         let mut seen = [false; 256];
         for &b in needle_bytes {
-            seen[b.to_ascii_lowercase() as usize] = true;
+            let key = if case_insensitive {
+                b.to_ascii_lowercase()
+            } else {
+                b
+            };
+            seen[key as usize] = true;
         }
         seen.iter().filter(|&&v| v).count()
     };

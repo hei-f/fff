@@ -1,4 +1,4 @@
-# @ff-labs/pi-fff
+# @hf-pi/fff
 
 A [pi](https://github.com/badlogic/pi-mono) extension that replaces the built-in `find` and `grep` tools with [FFF](https://github.com/dmtrKovalenko/fff) — a Rust-native, SIMD-accelerated file finder with built-in memory.
 
@@ -18,8 +18,8 @@ A [pi](https://github.com/badlogic/pi-mono) extension that replaces the built-in
 - **Query history** — remembers which files were selected for which queries. Combo boost.
 - **Git-aware** — modified/staged/untracked files are boosted in results.
 - **Smart case** — case-insensitive when query is all lowercase, case-sensitive otherwise.
-- **Fuzzy file search** — `find` uses fuzzy matching, not glob-only. Typo-tolerant.
-- **Cursor pagination** — grep results include a cursor for fetching the next page.
+- **Fuzzy file search** — `find` uses fuzzy matching, not glob-only. Typo-tolerant. Glob-constrained queries (`*.rs`, `src/**`) return full results directly.
+- **Cursor pagination** — grep and find results include a cursor for fetching the next page; find cursors resume from absolute offsets, so pages do not overlap.
 
 ## Install
 
@@ -32,13 +32,13 @@ Requirements:
 **Via npm (recommended):**
 
 ```bash
-pi install npm:@ff-labs/pi-fff
+pi install npm:@hf-pi/fff
 ```
 
 Project-local install:
 
 ```bash
-pi install -l npm:@ff-labs/pi-fff
+pi install -l npm:@hf-pi/fff
 ```
 
 **Via git:**
@@ -77,11 +77,27 @@ pi -e /path/to/fff/packages/pi-fff/src/index.ts
 
 After install, this extension registers FFF-powered `grep` and `find` tools that override pi's built-in ones.
 
+## Self-contained package
+
+`@hf-pi/fff` bundles everything it needs at runtime: the Bun and Node SDK bindings (vendored under `vendor/fff-bun/` and `vendor/fff-node/`, including their rebuilt `dist/`) and a prebuilt native `libfff_c` library for every supported desktop platform are embedded in the npm package. There is no runtime dependency on the `@ff-labs/fff-*` registry packages — the vendored binary is resolved first, with the registry lookup kept only as a fallback. `ffi-rs` is a direct runtime dependency.
+
+The native layer is built from the same source as upstream FFF by the release fork (hei-f/fff) in a GitHub Actions cross-compile matrix, so every platform ships the same code and version, including the native fixes in this release.
+
+## Platform support
+
+Prebuilt native libraries are embedded for 8 desktop targets: darwin-x64 / darwin-arm64, linux-x64 / linux-arm64 (gnu and musl), win32-x64 / win32-arm64 — all from the same source and version.
+
+Android / Termux is not supported: on those platforms `grep` and `find` fail with a missing-native-library error (known limitation).
+
 ## Tools
+
+Both tools share the same constraint syntax: `path` (include), `exclude` (noise), and `cursor` (pagination). Directory-style `exclude` segments (e.g. `test/`) are probed against the index whenever results are returned: a misspelled or absent directory surfaces a hint in the output instead of failing silently.
 
 ### `grep`
 
 Search file contents. Smart case, auto-detects regex vs literal, git-aware.
+
+`caseSensitive: true` forces strict matching: zero exact hits return no matches directly, without a fuzzy suggestion. In smart-case mode, a zero-hit literal query falls back to fuzzy and surfaces the best approximate hits.
 
 Parameters:
 
@@ -96,6 +112,8 @@ Parameters:
 ### `find`
 
 Fuzzy file name search. Frecency-ranked. Matches the whole repo-relative path, not just the filename.
+
+Glob-constrained queries return complete results directly — the weak-match gate caps output only for pure fuzzy queries. Pagination resumes from absolute offsets, so successive pages never overlap.
 
 Parameters:
 
