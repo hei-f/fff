@@ -1,9 +1,11 @@
 name: fff-package-build
 
+# 仅响应 pi-fff 专属 tag（pi-fff-v*），与上游 v* tag 隔离：
+# fork 同步上游 tag 再 push 不会误触发本 workflow
 on:
   push:
     tags:
-      - "v*"
+      - "pi-fff-v*"
   workflow_dispatch:
 
 env:
@@ -132,6 +134,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "25"
+          # 生成 .npmrc 使 NODE_AUTH_TOKEN 生效（否则 npm publish 报 ENEEDAUTH）
+          registry-url: "https://registry.npmjs.org"
 
       - uses: oven-sh/setup-bun@v2
 
@@ -187,8 +191,8 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         working-directory: packages/pi-fff
         run: |
-          VERSION="$REF_NAME"
-          VERSION="${VERSION#v}"
+          VERSION="${REF_NAME#pi-fff-v}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || { echo "FAIL: tag '$REF_NAME' is not pi-fff-v<semver>"; exit 1; }
           node -e "const fs = require('node:fs'); const p = JSON.parse(fs.readFileSync('package.json', 'utf8')); p.version = process.argv[1]; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');" "$VERSION"
 
       # 打包门禁：npm pack --dry-run 输出须含全部 vendored 库路径，缺任一即 fail
