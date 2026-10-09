@@ -1,5 +1,11 @@
 [files]
-extend-exclude = ["/CHANGELOG.md", "data/filetypes/base.lua"]
+extend-exclude = [
+  "/CHANGELOG.md",
+  "data/filetypes/base.lua",
+  # vendored 第三方运行时（ffi 绑定源码副本 + 构建产物 + sourcemap + 原生库），不属本项目拼写检查范围
+  "/packages/pi-fff/vendor",
+  "/packages/pi-fff/vendor/**",
+]
 
 [default.extend-words]
 noice = "noice"
