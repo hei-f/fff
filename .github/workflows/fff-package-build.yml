@@ -57,7 +57,8 @@ jobs:
             platform: linux-arm64-musl
             triple: aarch64-unknown-linux-musl
             lib_filename: libfff_c.so
-          # Windows：msvc 原生构建，无 zig；库名为 fff_c.dll（无 lib 前缀）
+          # Windows：msvc 原生构建，zlob 仍需 zig（代码生成用），链接走 MSVC；
+          # 库名为 fff_c.dll（无 lib 前缀）
           - os: windows-latest
             platform: win32-x64
             triple: x86_64-pc-windows-msvc
@@ -74,7 +75,6 @@ jobs:
         run: rustup target add ${{ matrix.triple }}
 
       - name: Install Zig
-        if: contains(matrix.os, 'ubuntu')
         uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
