@@ -159,10 +159,10 @@ jobs:
           bun build ./src/index.ts --format=esm --target=bun --sourcemap=external --outdir dist
           tsc -p tsconfig.build.json
 
-      # tsup 仅声明于 vendored fff-node 的 devDependency，不在任何 ancestor
-      # node_modules 上，故全局安装到 PATH 供 npm run build 解析
+      # tsup 为 vendored fff-node 的 devDependency、typescript 为其 peerDependency，
+      # 二者都不在任何 ancestor node_modules 上，故全局安装到 PATH 供 npm run build 解析
       - name: Install tsup for vendored fff-node build
-        run: npm install -g tsup@8.5.0
+        run: npm install -g tsup@8.5.0 typescript@5
 
       - name: Rebuild vendored fff-node dist
         working-directory: packages/pi-fff/vendor/fff-node
