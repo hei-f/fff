@@ -104,6 +104,26 @@ export function normalizedExcludeSegments(
   return [...segments];
 }
 
+// 把目录型 exclude 段转为精确目录探测 pattern；空段、绝对路径段（/ 开头）与家目录段
+// （~ 开头）无法判定返回 null；必须保留 `**/.../**` 外壳，裸段会退化为模糊搜索。
+export function excludeSegmentProbePattern(segment: string): string | null {
+  const trimmed = segment.replace(/\/+$/, "");
+  if (trimmed === "") return null;
+  if (trimmed.startsWith("/") || trimmed.startsWith("~")) return null;
+  // glob 元字符转义表，字符集与 GLOB_WILDCARDS_RE（* ? [ {）保持一致。
+  const globEscapes: Record<string, string> = {
+    "*": "[*]",
+    "?": "[?]",
+    "[": "[[]",
+    "{": "[{]",
+  };
+  let escaped = "";
+  for (const char of trimmed) {
+    escaped += globEscapes[char] ?? char;
+  }
+  return `**/${escaped}/**`;
+}
+
 export function buildQuery(
   path: string | undefined,
   pattern: string,

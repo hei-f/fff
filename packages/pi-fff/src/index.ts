@@ -31,7 +31,12 @@ import { AuxFinderPool, routePathConstraint } from "./aux-finders";
 import { loadConfig } from "./config";
 import { FilePickerFactory } from "./file-picker";
 import { isFsRoot, isHomeDir, resolveDbPaths } from "./paths";
-import { buildQuery, GLOB_WILDCARDS_RE, normalizedExcludeSegments } from "./query";
+import {
+  buildQuery,
+  excludeSegmentProbePattern,
+  GLOB_WILDCARDS_RE,
+  normalizedExcludeSegments,
+} from "./query";
 
 export { SCAN_TIMEOUT_MS } from "./sdk";
 
@@ -1266,8 +1271,8 @@ function hasGlobWildcards(pattern: string): boolean {
   return GLOB_WILDCARDS_RE.test(pattern);
 }
 
-// exclude 段存在性探测：段型排除项拼错（如 tests/ 而非 test/）会静默失效，
-// 对每个段做最小查询（pageSize 1），0 命中即在 notices 追加提示并静默跳过失败。
+// exclude 段存在性探测：段型排除项拼错（如 tests/ 而非 test/）会静默失效；改用精确
+// directorySearch 判定（fileSearch 模糊，近拼错串恒有命中）0 命中即提示，失败静默跳过。
 function appendExcludeSegmentHints(
   notices: string[],
   exclude: string | string[] | undefined,
@@ -1278,10 +1283,12 @@ function appendExcludeSegmentHints(
   if (!hasResults) return;
   for (const segment of normalizedExcludeSegments(exclude, cwd)) {
     try {
-      const probe = picker.fileSearch(segment, { pageSize: 1 });
-      if (probe.ok && probe.value.items.length === 0) {
+      const pattern = excludeSegmentProbePattern(segment);
+      if (pattern === null) continue;
+      const probe = picker.directorySearch(pattern, { pageSize: 1 });
+      if (probe.ok && probe.value.totalMatched === 0) {
         notices.push(
-          `exclude '${segment}' did not exclude any paths — it looks like the directory is misspelled or not in the index`,
+          `exclude '${segment}' matched no directory in this search — check the spelling or letter case`,
         );
       }
     } catch {

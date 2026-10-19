@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildQuery, normalizePathConstraint } from "../src/query";
+import {
+  buildQuery,
+  excludeSegmentProbePattern,
+  normalizePathConstraint,
+} from "../src/query";
 
 const cwd = "/tmp/workspace";
 
@@ -75,5 +79,40 @@ describe("path constraint normalization", () => {
     expect(normalizePathConstraint("**/*", cwd)).toBeNull();
     expect(normalizePathConstraint("./**", cwd)).toBeNull();
     expect(buildQuery("**", "needle", undefined, cwd)).toBe("needle");
+  });
+});
+
+// 精确目录探测 pattern 构造：必须保留 **/.../** 外壳，否则裸段会退化为模糊搜索；
+// 空段、绝对路径段与家目录段无法判定，返回 null 由调用方跳过探测。
+describe("exclude segment probe pattern", () => {
+  test("frames a plain directory segment with recursive globs", () => {
+    expect(excludeSegmentProbePattern("tests/")).toBe("**/tests/**");
+  });
+
+  test("keeps multi-level directory segments intact", () => {
+    expect(excludeSegmentProbePattern("crates/fff-core/srcs/")).toBe(
+      "**/crates/fff-core/srcs/**",
+    );
+  });
+
+  test("strips every trailing slash before framing", () => {
+    expect(excludeSegmentProbePattern("test////")).toBe("**/test/**");
+  });
+
+  test("returns null for empty segments", () => {
+    expect(excludeSegmentProbePattern("")).toBeNull();
+    expect(excludeSegmentProbePattern("/")).toBeNull();
+  });
+
+  test("returns null for absolute path segments", () => {
+    expect(excludeSegmentProbePattern("/abs/x/")).toBeNull();
+  });
+
+  test("returns null for home-directory segments", () => {
+    expect(excludeSegmentProbePattern("~/foo/")).toBeNull();
+  });
+
+  test("escapes glob metacharacters inside the segment", () => {
+    expect(excludeSegmentProbePattern("a[?*{b/")).toBe("**/a[[][?][*][{]b/**");
   });
 });

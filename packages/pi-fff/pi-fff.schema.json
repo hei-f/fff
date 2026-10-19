@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/dmtrKovalenko/fff/main/packages/pi-fff/pi-fff.schema.json",
+  "$id": "https://raw.githubusercontent.com/hei-f/fff/main/packages/pi-fff/pi-fff.schema.json",
   "title": "pi-fff configuration",
   "description": "Global startup configuration for the pi-fff extension.",
   "type": "object",

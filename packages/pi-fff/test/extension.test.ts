@@ -9,6 +9,7 @@ type MockFinder = {
   mixedSearch: ReturnType<typeof mock>;
   grep: ReturnType<typeof mock>;
   fileSearch: ReturnType<typeof mock>;
+  directorySearch: ReturnType<typeof mock>;
   getScanProgress: ReturnType<typeof mock>;
   destroy: ReturnType<typeof mock>;
 };
@@ -18,6 +19,7 @@ let finders: MockFinder[] = [];
 let mixedSearchImpl: ((query: string, options: unknown) => unknown) | undefined;
 let grepImpl: ((query: string, options: unknown) => unknown) | undefined;
 let fileSearchImpl: ((query: string, options: unknown) => unknown) | undefined;
+let directorySearchImpl: ((query: string, options: unknown) => unknown) | undefined;
 let scanProgressImpl: (() => unknown) | undefined;
 
 function createMockFinder(): MockFinder {
@@ -73,6 +75,13 @@ function createMockFinder(): MockFinder {
           totalMatched: 0,
           totalFiles: 0,
         },
+      };
+    }),
+    directorySearch: mock((query: string, options: unknown) => {
+      if (directorySearchImpl) return directorySearchImpl(query, options);
+      return {
+        ok: true,
+        value: { items: [], scores: [], totalMatched: 0, totalDirs: 0 },
       };
     }),
     destroy: mock(function (this: MockFinder) {
@@ -281,6 +290,7 @@ beforeEach(() => {
   mixedSearchImpl = undefined;
   grepImpl = undefined;
   fileSearchImpl = undefined;
+  directorySearchImpl = undefined;
   scanProgressImpl = undefined;
   finderModule.FileFinder.create.mockImplementation(defaultCreate);
 
@@ -1190,15 +1200,7 @@ describe("grep/find edge branches", () => {
   // find：exclude 段型排除项探测——段不存在（拼错）时 0 命中 → 输出提示，
   // 静默失效变为可见；! 前缀剥除后与普通段归一化一致，单一段只探测一次
   test("find hints when an exclude segment is misspelled", async () => {
-    fileSearchImpl = (query, options) => {
-      const probe = (options as { pageSize?: number }).pageSize === 1;
-      if (probe) {
-        // 段不存在：探测 0 命中
-        return {
-          ok: true,
-          value: { items: [], scores: [], totalMatched: 0, totalFiles: 0 },
-        };
-      }
+    fileSearchImpl = () => {
       const items = fullPageFiles();
       return {
         ok: true,
@@ -1210,6 +1212,11 @@ describe("grep/find edge branches", () => {
         },
       };
     };
+    // 段不存在：精确目录探测 0 命中
+    directorySearchImpl = () => ({
+      ok: true,
+      value: { items: [], scores: [], totalMatched: 0, totalDirs: 0 },
+    });
 
     const setup = await start();
     const tool = toolWithName(setup, "find");
@@ -1220,42 +1227,23 @@ describe("grep/find edge branches", () => {
     );
 
     expect(result.content[0].text).toContain(
-      "exclude 'tests/' did not exclude any paths",
+      "exclude 'tests/' matched no directory in this search",
     );
-    const probes = finders[0].fileSearch.mock.calls.filter(
+    const probes = finders[0].directorySearch.mock.calls;
+    expect(probes.map(([query]) => query)).toEqual(["**/tests/**"]);
+    // 探测必须走精确的 directorySearch；find 主搜索走 fileSearch，故只排除
+    // pageSize===1 的探测形态（不得出现）。
+    const probeLikeFileCalls = finders[0].fileSearch.mock.calls.filter(
       ([, options]) => (options as { pageSize?: number }).pageSize === 1,
     );
-    expect(probes.map(([query]) => query)).toEqual(["tests/"]);
+    expect(probeLikeFileCalls).toHaveLength(0);
     await shutdown(setup);
   });
 
   // find：反向用例——段真实存在时探测命中，不提示（防误伤）；
   // 逗号分隔的 glob（*.min.js）非段型不参与探测
   test("find does not hint when the exclude segment exists", async () => {
-    fileSearchImpl = (query, options) => {
-      const probe = (options as { pageSize?: number }).pageSize === 1;
-      if (probe) {
-        // 段存在：探测命中 1 条
-        return {
-          ok: true,
-          value: {
-            items: [
-              {
-                relativePath: "test/a.ts",
-                size: 1,
-                modified: 1,
-                accessFrecencyScore: 0,
-                modificationFrecencyScore: 0,
-                totalFrecencyScore: 0,
-                gitStatus: "clean",
-              },
-            ],
-            scores: [{ total: 100 }],
-            totalMatched: 1,
-            totalFiles: 1,
-          },
-        };
-      }
+    fileSearchImpl = () => {
       const items = fullPageFiles();
       return {
         ok: true,
@@ -1267,6 +1255,11 @@ describe("grep/find edge branches", () => {
         },
       };
     };
+    // 段存在：精确目录探测命中 1 条
+    directorySearchImpl = () => ({
+      ok: true,
+      value: { items: [], scores: [], totalMatched: 1, totalDirs: 1 },
+    });
 
     const setup = await start();
     const tool = toolWithName(setup, "find");
@@ -1276,23 +1269,18 @@ describe("grep/find edge branches", () => {
       abortOptions().signal,
     );
 
-    expect(result.content[0].text).not.toContain("did not exclude any paths");
-    // 仅段型 test/ 参与探测，glob *.min.js 被过滤
-    const probes = finders[0].fileSearch.mock.calls.filter(
-      ([, options]) => (options as { pageSize?: number }).pageSize === 1,
+    expect(result.content[0].text).not.toContain(
+      "matched no directory in this search",
     );
-    expect(probes.map(([query]) => query)).toEqual(["test/"]);
+    // 仅段型 test/ 参与探测，glob *.min.js 被过滤
+    const probes = finders[0].directorySearch.mock.calls;
+    expect(probes.map(([query]) => query)).toEqual(["**/test/**"]);
     await shutdown(setup);
   });
 
   // 探测失败静默跳过：抛错或 ok:false 都不影响工具结果、不追加提示
   test("find ignores exclude probes that error or report failure", async () => {
-    fileSearchImpl = (query, options) => {
-      const probe = (options as { pageSize?: number }).pageSize === 1;
-      if (probe) {
-        if (query === "broken/") throw new Error("probe boom");
-        return { ok: false, error: "probe lock" };
-      }
+    fileSearchImpl = () => {
       const items = fullPageFiles();
       return {
         ok: true,
@@ -1304,6 +1292,10 @@ describe("grep/find edge branches", () => {
         },
       };
     };
+    directorySearchImpl = (query) => {
+      if (query === "**/broken/**") throw new Error("probe boom");
+      return { ok: false, error: "probe lock" };
+    };
 
     const setup = await start();
     const tool = toolWithName(setup, "find");
@@ -1312,14 +1304,18 @@ describe("grep/find edge branches", () => {
       { pattern: "config", exclude: "broken/" },
       abortOptions().signal,
     );
-    expect(thrown.content[0].text).not.toContain("did not exclude any paths");
+    expect(thrown.content[0].text).not.toContain(
+      "matched no directory in this search",
+    );
 
     const failed = await tool.execute(
       "call-2",
       { pattern: "config", exclude: "locked/" },
       abortOptions().signal,
     );
-    expect(failed.content[0].text).not.toContain("did not exclude any paths");
+    expect(failed.content[0].text).not.toContain(
+      "matched no directory in this search",
+    );
     await shutdown(setup);
   });
 
@@ -1346,11 +1342,11 @@ describe("grep/find edge branches", () => {
       abortOptions().signal,
     );
 
-    expect(result.content[0].text).not.toContain("did not exclude any paths");
-    const probes = finders[0].fileSearch.mock.calls.filter(
-      ([, options]) => (options as { pageSize?: number }).pageSize === 1,
+    expect(result.content[0].text).not.toContain(
+      "matched no directory in this search",
     );
-    expect(probes).toHaveLength(0);
+    // 退化段不探测：断言探测原语本身零调用，避免切换原语后断言恒真（假绿灯）
+    expect(finders[0].directorySearch).not.toHaveBeenCalled();
     await shutdown(setup);
   });
 
@@ -1376,10 +1372,8 @@ describe("grep/find edge branches", () => {
       pageIndex: 0,
       hasMore: false,
     });
-    const probes = finders[0].fileSearch.mock.calls.filter(
-      ([, options]) => (options as { pageSize?: number }).pageSize === 1,
-    );
-    expect(probes).toHaveLength(0);
+    // 空结果门控跳过探测：断言探测原语本身零调用
+    expect(finders[0].directorySearch).not.toHaveBeenCalled();
     await shutdown(setup);
   });
 
@@ -1478,29 +1472,17 @@ describe("grep/find edge branches", () => {
         nextCursor: null,
       },
     });
-    fileSearchImpl = (query, options) => {
-      // grep 只经 fileSearch 做段探测，非 pageSize 1 的调用即环境异常
+    directorySearchImpl = (query, options) => {
+      // grep 只经 directorySearch 做段探测，非 pageSize 1 的调用即环境异常
       expect((options as { pageSize?: number }).pageSize).toBe(1);
-      const hit = query === "source/";
+      const hit = query === "**/source/**";
       return {
         ok: true,
         value: {
-          items: hit
-            ? [
-                {
-                  relativePath: "source/a.ts",
-                  size: 1,
-                  modified: 1,
-                  accessFrecencyScore: 0,
-                  modificationFrecencyScore: 0,
-                  totalFrecencyScore: 0,
-                  gitStatus: "clean",
-                },
-              ]
-            : [],
-          scores: hit ? [{ total: 100 }] : [],
+          items: [],
+          scores: [],
           totalMatched: hit ? 1 : 0,
-          totalFiles: hit ? 1 : 0,
+          totalDirs: hit ? 1 : 0,
         },
       };
     };
@@ -1514,10 +1496,10 @@ describe("grep/find edge branches", () => {
     );
 
     expect(result.content[0].text).toContain(
-      "exclude 'tests/' did not exclude any paths",
+      "exclude 'tests/' matched no directory in this search",
     );
     expect(result.content[0].text).not.toContain(
-      "exclude 'source/' did not exclude",
+      "exclude 'source/' matched no directory",
     );
     await shutdown(setup);
   });
@@ -1544,24 +1526,9 @@ describe("grep/find edge branches", () => {
         nextCursor: null,
       },
     });
-    fileSearchImpl = () => ({
+    directorySearchImpl = () => ({
       ok: true,
-      value: {
-        items: [
-          {
-            relativePath: "test/a.ts",
-            size: 1,
-            modified: 1,
-            accessFrecencyScore: 0,
-            modificationFrecencyScore: 0,
-            totalFrecencyScore: 0,
-            gitStatus: "clean",
-          },
-        ],
-        scores: [{ total: 100 }],
-        totalMatched: 1,
-        totalFiles: 1,
-      },
+      value: { items: [], scores: [], totalMatched: 1, totalDirs: 1 },
     });
 
     const setup = await start();
@@ -1572,7 +1539,126 @@ describe("grep/find edge branches", () => {
       abortOptions().signal,
     );
 
-    expect(result.content[0].text).not.toContain("did not exclude any paths");
+    expect(result.content[0].text).not.toContain(
+      "matched no directory in this search",
+    );
+    await shutdown(setup);
+  });
+
+  // 规范例外（fe-coding/testing.md:24-25 禁止断言内部实现细节）：本轮缺陷根因正是
+  // 「探测选错了原语」——旧的 fileSearch 是模糊搜索，近拼错串恒有命中，自检因此完全
+  // 失效。只有锁死探测原语为精确的 directorySearch，才能防止退回模糊搜索。
+  test("exclude probing never falls back to fuzzy fileSearch", async () => {
+    grepImpl = () => ({
+      ok: true,
+      value: {
+        items: [
+          {
+            relativePath: "src/a.ts",
+            lineNumber: 1,
+            col: 1,
+            lineContent: "hello",
+            contextBefore: [],
+            contextAfter: [],
+          },
+        ],
+        totalMatched: 1,
+        totalFiles: 1,
+        totalFilesSearched: 1,
+        filteredFileCount: 0,
+        nextCursor: null,
+      },
+    });
+    directorySearchImpl = () => ({
+      ok: true,
+      value: { items: [], scores: [], totalMatched: 0, totalDirs: 0 },
+    });
+
+    const setup = await start();
+    const tool = toolWithName(setup, "grep");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "TODO", exclude: "tests/" },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).toContain(
+      "exclude 'tests/' matched no directory in this search",
+    );
+    // grep 主搜索走 picker.grep，fileSearch 仅可能被探测误用 → 必须零调用
+    expect(finders[0].fileSearch).not.toHaveBeenCalled();
+    expect(finders[0].directorySearch.mock.calls).toEqual([
+      ["**/tests/**", { pageSize: 1 }],
+    ]);
+    await shutdown(setup);
+  });
+
+  // 边界：不可判定段（家目录 `~` 开头）不探测、不提示；若改用工作区外绝对路径
+  // （如 /tmp/abs/）会在 normalizePathConstraint 抛错，根本走不到探测。
+  test("does not probe or hint for undecidable exclude segments", async () => {
+    fileSearchImpl = () => {
+      const items = fullPageFiles();
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 100 })),
+          totalMatched: 50,
+          totalFiles: 1,
+        },
+      };
+    };
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "config", exclude: "~/foo/" },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).not.toContain(
+      "matched no directory in this search",
+    );
+    expect(finders[0].directorySearch).not.toHaveBeenCalled();
+    await shutdown(setup);
+  });
+
+  // 有意行为：原生 exclude 匹配大小写不敏感，而探测按字面大小写敏感。真实目录为小写
+  // test/、用户写 Test/ 时探测返回 0 → 提示照发（check letter case）。该偏差已裁决为
+  // 有意保留，勿当作 bug 修掉。
+  test("hints when the exclude segment differs only by letter case", async () => {
+    fileSearchImpl = () => {
+      const items = fullPageFiles();
+      return {
+        ok: true,
+        value: {
+          items,
+          scores: items.map(() => ({ total: 100 })),
+          totalMatched: 50,
+          totalFiles: 1,
+        },
+      };
+    };
+    directorySearchImpl = () => ({
+      ok: true,
+      value: { items: [], scores: [], totalMatched: 0, totalDirs: 0 },
+    });
+
+    const setup = await start();
+    const tool = toolWithName(setup, "find");
+    const result = await tool.execute(
+      "call-1",
+      { pattern: "config", exclude: "Test/" },
+      abortOptions().signal,
+    );
+
+    expect(result.content[0].text).toContain(
+      "exclude 'Test/' matched no directory in this search",
+    );
+    expect(
+      finders[0].directorySearch.mock.calls.map(([query]) => query),
+    ).toEqual(["**/Test/**"]);
     await shutdown(setup);
   });
 });

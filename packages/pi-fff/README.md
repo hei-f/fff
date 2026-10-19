@@ -44,19 +44,21 @@ pi install -l npm:@hf-pi/fff
 **Via git:**
 
 ```bash
-pi install git:github.com/dmtrKovalenko/fff
+pi install git:github.com/hei-f/fff
 ```
 
 Pin to a release:
 
 ```bash
-pi install git:github.com/dmtrKovalenko/fff@v0.3.0
+pi install git:github.com/hei-f/fff@pi-fff-v0.0.1
 ```
+
+The `pi-fff-v<version>` tag is created by this fork's release process.
 
 ### Local development / manual install
 
 ```bash
-git clone https://github.com/dmtrKovalenko/fff.git
+git clone https://github.com/hei-f/fff.git
 cd fff/packages/pi-fff
 npm install
 ```
@@ -79,7 +81,7 @@ After install, this extension registers FFF-powered `grep` and `find` tools that
 
 ## Self-contained package
 
-`@hf-pi/fff` bundles everything it needs at runtime: the Bun and Node SDK bindings (vendored under `vendor/fff-bun/` and `vendor/fff-node/`, including their rebuilt `dist/`) and a prebuilt native `libfff_c` library for every supported desktop platform are embedded in the npm package. There is no runtime dependency on the `@ff-labs/fff-*` registry packages — the vendored binary is resolved first, with the registry lookup kept only as a fallback. `ffi-rs` is a direct runtime dependency.
+`@hf-pi/fff` bundles everything it needs at runtime: the Bun and Node SDK bindings (vendored under `vendor/fff-bun/` and `vendor/fff-node/`, including their rebuilt `dist/`) and a prebuilt native `libfff_c` library for every supported desktop platform are embedded in the package: the same 8 platform libraries ship in both the npm package and a `git:` install, since the prebuilt libraries are committed to the repository. There is no runtime dependency on the `@ff-labs/fff-*` registry packages — the vendored binary is resolved first, with the registry lookup kept only as a fallback. `ffi-rs` is a direct runtime dependency.
 
 The native layer is built from the same source as upstream FFF by the release fork (hei-f/fff) in a GitHub Actions cross-compile matrix, so every platform ships the same code and version, including the native fixes in this release.
 
@@ -91,7 +93,7 @@ Android / Termux is not supported: on those platforms `grep` and `find` fail wit
 
 ## Tools
 
-Both tools share the same constraint syntax: `path` (include), `exclude` (noise), and `cursor` (pagination). Directory-style `exclude` segments (e.g. `test/`) are probed against the index whenever results are returned: a misspelled or absent directory surfaces a hint in the output instead of failing silently.
+Both tools share the same constraint syntax: `path` (include), `exclude` (noise), and `cursor` (pagination). Directory-style `exclude` segments (e.g. `test/`) are probed as exact directories against the picker root of the current search — not the whole index — whenever results are returned: a misspelled or absent directory surfaces a hint in the output instead of failing silently. An existing but empty directory still counts as present. Segments written as `~/…` or absolute paths are not judged and never hint. Three known limitations apply: (1) the probe is scoped to the picker root, so reusing a wider-coverage picker can miss a hint — it never produces a hint for a directory that does exist; (2) directory matching is case-insensitive in the native layer while the probe is case-sensitive, so a segment that differs from a real directory only in letter case may still surface a hint — check the letter case; (3) a `~/…` segment never matches in the native layer (real paths contain no `~`), so that exclusion has no effect and the probe treats it as undecidable and stays silent, deliberately preferring a missed hint over a wrong one.
 
 ### `grep`
 
@@ -138,7 +140,7 @@ For persistent global configuration, create `pi-fff.json` in pi's agent director
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/dmtrKovalenko/fff/main/packages/pi-fff/pi-fff.schema.json",
+  "$schema": "https://raw.githubusercontent.com/hei-f/fff/main/packages/pi-fff/pi-fff.schema.json",
   "frecencyDbPath": "/path/to/frecency",
   "historyDbPath": "/path/to/history",
   "enableFsRootScanning": false,

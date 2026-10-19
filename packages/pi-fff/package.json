@@ -7,12 +7,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dmtrKovalenko/fff.git",
+    "url": "git+https://github.com/hei-f/fff.git",
     "directory": "packages/pi-fff"
   },
-  "homepage": "https://github.com/dmtrKovalenko/fff/tree/main/packages/pi-fff",
+  "homepage": "https://github.com/hei-f/fff/tree/main/packages/pi-fff",
   "bugs": {
-    "url": "https://github.com/dmtrKovalenko/fff/issues"
+    "url": "https://github.com/hei-f/fff/issues"
   },
   "keywords": [
     "pi",

@@ -153,6 +153,37 @@ jobs:
           pattern: lib-*
           path: ./libs
 
+      # 一致性门禁：本次新构建产物须与已提交库逐字节一致，防止原生日志静默过期
+      - name: Verify committed libraries match fresh build
+        shell: bash
+        run: |
+          PLATFORMS="darwin-x64 darwin-arm64 linux-x64-gnu linux-arm64-gnu linux-x64-musl linux-arm64-musl win32-x64 win32-arm64"
+          LIB_COUNT=0
+          MISMATCHED=0
+          # Copy 步骤把同一源文件复制到两个 vendored 包，两包必然同源；
+          # 故每平台只比对 fff-node 一侧，重复比对不增加检出能力
+          for platform in $PLATFORMS; do
+            case "$platform" in
+              win32-*) LIB_NAME="fff_c.dll" ;;
+              darwin-*) LIB_NAME="libfff_c.dylib" ;;
+              *) LIB_NAME="libfff_c.so" ;;
+            esac
+            FRESH="libs/lib-$platform/$LIB_NAME"
+            COMMITTED="packages/pi-fff/vendor/fff-node/bin/$platform/$LIB_NAME"
+            LIB_COUNT=$((LIB_COUNT + 1))
+            if [ ! -f "$FRESH" ] || [ ! -f "$COMMITTED" ] || ! cmp -s "$FRESH" "$COMMITTED"; then
+              MISMATCHED=$((MISMATCHED + 1))
+              echo "MISMATCH: $platform"
+              echo "  fresh:     $FRESH"
+              echo "  committed: $COMMITTED"
+            fi
+          done
+          if [ "$MISMATCHED" -ne 0 ]; then
+            echo "FAIL: committed vendored libraries are stale; rebuild and refresh them ($MISMATCHED/$LIB_COUNT platforms differ)"
+            exit 1
+          fi
+          echo "OK: committed vendored libraries match fresh build ($LIB_COUNT platforms, $LIB_COUNT libraries compared)"
+
       - name: Rebuild vendored fff-bun dist
         working-directory: packages/pi-fff/vendor/fff-bun
         run: |
